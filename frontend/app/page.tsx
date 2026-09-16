@@ -1,25 +1,84 @@
 'use client';
 
 import React, {
-  useState,
+  memo,
+  useCallback,
+  useEffect,
   useMemo,
   useRef,
-  useEffect,
-  useCallback,
-  memo,
-  useDeferredValue,
+  useState,
 } from 'react';
 import {
-  ShoppingCart, Search, FileText, Phone, MapPin, Clock, X, Plus, Minus, UploadCloud,
-  CheckCircle2, Image as ImageIcon, Info, HeartHandshake, Award, Store, Shield, Navigation,
-  AlertCircle, Trash2, Loader2, PhoneCall, User as UserIcon, LogOut, LayoutDashboard,
-  Package, Pencil, EyeOff, RefreshCw, ChevronLeft, Receipt, TrendingUp, MessageSquareWarning, Map, ArrowRight
+  AlertCircle,
+  ArrowRight,
+  Award,
+  Camera,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Eye,
+  EyeOff,
+  FileText,
+  Image as ImageIcon,
+  IndianRupee,
+  LayoutDashboard,
+  LayoutList,
+  Loader2,
+  LogIn,
+  LogOut,
+  Map as MapIcon,
+  MapPin,
+  MessageCircle,
+  Minus,
+  Navigation,
+  Package,
+  Pencil,
+  Phone,
+  PhoneCall,
+  Plus,
+  Receipt,
+  RefreshCw,
+  Search,
+  Shield,
+  ShoppingCart,
+  Sparkles,
+  Store,
+  Trash2,
+  Truck,
+  UploadCloud,
+  UserRound,
+  X,
 } from 'lucide-react';
+
+/* ================================================================== */
+/*  Types                                                              */
+/* ================================================================== */
 
 type BuyType = 'full' | 'loose';
 type LocateStatus = 'idle' | 'loading' | 'success' | 'error';
 type Role = 'customer' | 'admin';
-type OrderStatus = 'pending_whatsapp' | 'placed' | 'confirmed' | 'packed' | 'out_for_delivery' | 'delivered' | 'cancelled';
+type ToastTone = 'success' | 'error';
+type AdminTab = 'orders' | 'catalogue' | 'branches';
+type OrderRange = 'today' | 'week' | 'month' | 'all';
+
+type OrderStatus =
+  | 'pending_whatsapp'
+  | 'placed'
+  | 'confirmed'
+  | 'packed'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'cancelled';
+
+interface UserAddress {
+  label?: string;
+  houseNo: string;
+  area: string;
+  landmark: string;
+}
 
 interface AuthUser {
   id: string;
@@ -27,6 +86,14 @@ interface AuthUser {
   email: string;
   phone: string;
   role: Role;
+  addresses?: UserAddress[];
+}
+
+interface MedicineInventory {
+  branch: string;
+  stockUnits: number;
+  lowStockAt: number;
+  isAvailable: boolean;
 }
 
 interface Medicine {
@@ -46,6 +113,7 @@ interface Medicine {
   imagePublicId: string;
   tag: string;
   isActive: boolean;
+  inventory: MedicineInventory[];
 }
 
 interface Branch {
@@ -58,6 +126,8 @@ interface Branch {
   fullAddress: string;
   lat: number;
   lng: number;
+  serviceRadiusKm: number;
+  open24h: boolean;
   isActive: boolean;
 }
 
@@ -72,6 +142,7 @@ interface CartItem {
   qty: number;
   unitPrice: number;
   unitMrp: number;
+  requiresPrescription: boolean;
 }
 
 interface AddressForm {
@@ -82,36 +153,102 @@ interface AddressForm {
   landmark: string;
 }
 
+interface OrderItemRecord {
+  medicine?: string;
+  name: string;
+  displayName: string;
+  buyType: BuyType;
+  qty: number;
+  unitPrice: number;
+  unitMrp: number;
+  lineTotal: number;
+  requiresPrescription?: boolean;
+}
+
+interface StatusHistoryRecord {
+  status: OrderStatus;
+  at: string;
+  note?: string;
+}
+
 interface OrderRecord {
   _id: string;
+  id?: string;
   orderNumber: string;
   type: 'cart' | 'prescription';
   status: OrderStatus;
   estimatedTotal: number;
-  prescriptionUrl?: string;
+  estimatedSavings?: number;
+  hasPrescription?: boolean;
+  note?: string;
   createdAt: string;
   customer: AddressForm;
-  items: Array<{ displayName: string; qty: number; lineTotal: number }>;
-  branch?: Pick<Branch, '_id' | 'name' | 'shortName' | 'phone' | 'address'>;
+  items: OrderItemRecord[];
+  statusHistory?: StatusHistoryRecord[];
+  branch?:
+    | Pick<Branch, '_id' | 'name' | 'shortName' | 'phone' | 'address'>
+    | {
+        id: string;
+        name: string;
+        shortName?: string;
+        phone: string;
+      };
   user?: { name: string; email: string } | null;
+}
+
+interface BranchPerformance {
+  id: string;
+  name: string;
+  orders: number;
+  pct: number;
+}
+
+interface AdminStats {
+  ordersToday: number;
+  ordersDelta: number;
+  waitingWhatsApp: number;
+  openOrders: number;
+  bookedToday: number;
+  bookedDelta: number;
+  medicineCount: number;
+  ordersSeries: number[];
+  revenueSeries: number[];
+  branchPerformance: BranchPerformance[];
+}
+
+interface Toast {
+  id: number;
+  text: string;
+  tone: ToastTone;
 }
 
 type FieldErrors = Record<string, string | undefined>;
 
 /* ================================================================== */
-/*  Constants and helpers                                             */
+/*  Constants                                                          */
 /* ================================================================== */
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/$/, '');
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
-const CART_STORAGE_KEY = 'lp_cart_v1';
-const TOKEN_KEY = 'lp_token';
+const CART_STORAGE_KEY = 'lp_cart_v3';
 const MAX_QTY_PER_ITEM = 20;
+const MAX_CART_LINES = 60;
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const PAGE_SIZE = 24;
+const ADMIN_ORDERS_PAGE_SIZE = 20;
+const ADMIN_CATALOGUE_PAGE_SIZE = 40;
+const SEARCH_DEBOUNCE_MS = 350;
+const REQUEST_TIMEOUT_MS = 20000;
+const ALL_CATEGORIES = 'All';
+const ACCEPTED_IMAGE_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
 
 const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
-  pending_whatsapp: 'Pending Message',
+  pending_whatsapp: 'Waiting on WhatsApp',
   placed: 'Placed',
   confirmed: 'Confirmed',
   packed: 'Packed',
@@ -121,55 +258,103 @@ const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
 };
 
 const ORDER_STATUS_STYLE: Record<OrderStatus, string> = {
-  pending_whatsapp: 'bg-orange-100/50 text-orange-700 border-orange-200/50',
-  placed: 'bg-indigo-100/50 text-indigo-700 border-indigo-200/50',
-  confirmed: 'bg-blue-100/50 text-blue-700 border-blue-200/50',
-  packed: 'bg-violet-100/50 text-violet-700 border-violet-200/50',
-  out_for_delivery: 'bg-fuchsia-100/50 text-fuchsia-700 border-fuchsia-200/50',
-  delivered: 'bg-emerald-100/50 text-emerald-700 border-emerald-200/50',
-  cancelled: 'bg-rose-100/50 text-rose-700 border-rose-200/50',
+  pending_whatsapp: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/70',
+  placed: 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/70',
+  confirmed: 'bg-[#E6F4F1] text-[#0B7A6B] ring-1 ring-[#0B7A6B]/20',
+  packed: 'bg-violet-50 text-violet-700 ring-1 ring-violet-200/70',
+  out_for_delivery: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200/70',
+  delivered: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/70',
+  cancelled: 'bg-rose-50 text-rose-700 ring-1 ring-rose-200/70',
 };
+
+const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  pending_whatsapp: ['placed', 'confirmed', 'cancelled'],
+  placed: ['confirmed', 'cancelled'],
+  confirmed: ['packed', 'cancelled'],
+  packed: ['out_for_delivery', 'cancelled'],
+  out_for_delivery: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+};
+
+const ORDER_RANGE_LABEL: Record<OrderRange, string> = {
+  today: 'Today',
+  week: 'Last 7 days',
+  month: 'Last 30 days',
+  all: 'All time',
+};
+
+const AVATAR_TONES = [
+  'bg-emerald-100 text-emerald-700',
+  'bg-sky-100 text-sky-700',
+  'bg-rose-100 text-rose-700',
+  'bg-violet-100 text-violet-700',
+  'bg-amber-100 text-amber-700',
+];
+
+/* ================================================================== */
+/*  Helpers                                                            */
+/* ================================================================== */
+
+const cx = (...parts: Array<string | false | null | undefined>) =>
+  parts.filter(Boolean).join(' ');
 
 const currency = new Intl.NumberFormat('en-IN', {
   style: 'currency',
   currency: 'INR',
-  minimumFractionDigits: 2,
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
 });
 
-const formatMoney = (value: number) => currency.format(Number.isFinite(value) ? value : 0);
+const compactNumber = new Intl.NumberFormat('en-IN', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
+
+const formatMoney = (value: number) =>
+  currency.format(Number.isFinite(value) ? value : 0);
 
 const formatDate = (iso: string) =>
-  new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+  new Date(iso).toLocaleString('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Kolkata',
+  });
+
+const formatTimeOnly = (iso: string) =>
+  new Date(iso).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Kolkata',
+  });
 
 const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const INDIAN_MOBILE = /^[6-9]\d{9}$/;
-
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
 
+const initialsOf = (name: string) =>
+  name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0] || '')
+    .join('')
+    .toUpperCase() || '?';
+
+const branchIdOf = (branch: OrderRecord['branch']) =>
+  branch && '_id' in branch ? branch._id : branch?.id || '';
+
 function distanceInKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const EARTH_RADIUS_KM = 6371;
+  const earthRadiusKm = 6371;
   const dLat = toRadians(lat2 - lat1);
   const dLon = toRadians(lon2 - lon1);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2;
-  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLon / 2) ** 2;
 
-async function getRoutingDistance(originLat: number, originLng: number, destLat: number, destLng: number): Promise<number> {
-  if (!GOOGLE_MAPS_API_KEY) {
-    return distanceInKm(originLat, originLng, destLat, destLng);
-  }
-  try {
-    const res = await fetch(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${originLat},${originLng}&destinations=${destLat},${destLng}&key=${GOOGLE_MAPS_API_KEY}`);
-    const data = await res.json();
-    if (data.rows[0]?.elements[0]?.status === 'OK') {
-      return data.rows[0].elements[0].distance.value / 1000;
-    }
-  } catch (err) {
-    console.error('Google Maps Error:', err);
-  }
-  return distanceInKm(originLat, originLng, destLat, destLng);
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function sanitizeForMessage(value: string, maxLength = 120): string {
@@ -182,84 +367,269 @@ function sanitizeForMessage(value: string, maxLength = 120): string {
 
 function validateAddress(address: AddressForm, requireArea: boolean): FieldErrors {
   const errors: FieldErrors = {};
-  if (sanitizeForMessage(address.name).length < 2) errors.name = 'Enter the name for this delivery.';
-  if (!INDIAN_MOBILE.test(digitsOnly(address.phone))) errors.phone = 'Enter a 10-digit mobile number.';
-  if (sanitizeForMessage(address.houseNo).length < 3) errors.houseNo = 'Enter your house or flat number.';
-  if (requireArea && sanitizeForMessage(address.area).length < 3) errors.area = 'Enter your area or locality.';
+
+  if (sanitizeForMessage(address.name).length < 2) {
+    errors.name = 'Enter the name for this delivery.';
+  }
+  if (!INDIAN_MOBILE.test(digitsOnly(address.phone))) {
+    errors.phone = 'Enter a 10-digit mobile number.';
+  }
+  if (sanitizeForMessage(address.houseNo).length < 3) {
+    errors.houseNo = 'Enter your house or flat number.';
+  }
+  if (requireArea && sanitizeForMessage(address.area).length < 3) {
+    errors.area = 'Enter your area or locality.';
+  }
+
   return errors;
 }
 
 function geolocationMessage(error: GeolocationPositionError): string {
   switch (error.code) {
     case error.PERMISSION_DENIED:
-      return 'Location is blocked in your browser. Pick a branch manually.';
+      return 'Location is blocked in your browser. Choose a branch below.';
     case error.POSITION_UNAVAILABLE:
-      return 'Your location could not be read. Pick a branch manually.';
+      return 'Your location could not be read. Choose a branch below.';
     case error.TIMEOUT:
-      return 'Locating took too long. Try again or pick a branch manually.';
+      return 'Locating took too long. Try again or choose a branch below.';
     default:
-      return 'Something went wrong while locating you. Pick a branch manually.';
+      return 'Locating failed. Choose a branch below.';
   }
 }
 
-/* ---------------- API client ---------------- */
+function parseStoredCart(raw: string | null): CartItem[] {
+  if (!raw) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((entry): entry is CartItem => {
+        if (!entry || typeof entry !== 'object') return false;
+        const item = entry as Record<string, unknown>;
+        return (
+          typeof item.cartItemId === 'string' &&
+          typeof item.medicineId === 'string' &&
+          typeof item.name === 'string' &&
+          (item.buyType === 'full' || item.buyType === 'loose') &&
+          Number.isFinite(item.qty) &&
+          Number.isFinite(item.unitPrice)
+        );
+      })
+      .slice(0, MAX_CART_LINES)
+      .map((item) => ({
+        ...item,
+        displayName:
+          typeof item.displayName === 'string' ? item.displayName : item.name,
+        emoji: typeof item.emoji === 'string' ? item.emoji : '',
+        imageUrl: typeof item.imageUrl === 'string' ? item.imageUrl : '',
+        qty: Math.min(Math.max(Math.round(item.qty), 1), MAX_QTY_PER_ITEM),
+        unitPrice: Math.max(0, item.unitPrice),
+        unitMrp: Number.isFinite(item.unitMrp)
+          ? Math.max(0, item.unitMrp)
+          : item.unitPrice,
+        requiresPrescription: Boolean(item.requiresPrescription),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}_${Math.random().toString(36).slice(2)}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
+}
+
+function getInventoryForBranch(medicine: Medicine, branchId?: string) {
+  if (!branchId) return undefined;
+  return medicine.inventory?.find(
+    (entry) => String(entry.branch) === String(branchId),
+  );
+}
+
+function availableFullPacks(medicine: Medicine, branchId?: string): number | null {
+  const inventory = getInventoryForBranch(medicine, branchId);
+  if (!inventory) return null;
+  const divisor = medicine.isDivisible ? Math.max(1, medicine.packSize) : 1;
+  return Math.floor(inventory.stockUnits / divisor);
+}
+
+/* ================================================================== */
+/*  API                                                                */
+/* ================================================================== */
 
 class ApiError extends Error {
   status: number;
   details?: FieldErrors;
+  requestId?: string;
 
-  constructor(status: number, message: string, details?: FieldErrors) {
+  constructor(
+    status: number,
+    message: string,
+    details?: FieldErrors,
+    requestId?: string,
+  ) {
     super(message);
+    this.name = 'ApiError';
     this.status = status;
     this.details = details;
+    this.requestId = requestId;
   }
+}
+
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException
+    ? error.name === 'AbortError'
+    : (error as Error)?.name === 'AbortError';
+
+let csrfToken: string | null = null;
+let csrfPromise: Promise<string> | null = null;
+
+async function ensureCsrf(): Promise<string> {
+  if (csrfToken) return csrfToken;
+  if (csrfPromise) return csrfPromise;
+
+  csrfPromise = fetch(`${API_URL}/api/auth/csrf`, {
+    credentials: 'include',
+  })
+    .then(async (response) => {
+      const data = await response.json();
+      if (!response.ok || !data?.csrfToken) {
+        throw new ApiError(response.status, data?.message || 'Security handshake failed.');
+      }
+      csrfToken = data.csrfToken;
+      return csrfToken as string;
+    })
+    .finally(() => {
+      csrfPromise = null;
+    });
+
+  return csrfPromise;
 }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  let response: Response;
-  const token = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null;
-  const headers: HeadersInit = {
-    ...(options.headers || {}),
+  const method = String(options.method || 'GET').toUpperCase();
+  const writeRequest = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  const headers: Record<string, string> = {
+    ...((options.headers as Record<string, string>) || {}),
   };
-  
+
   if (!(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
   }
-  
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+
+  if (writeRequest) {
+    headers['X-CSRF-Token'] = await ensureCsrf();
   }
+
+  const timeoutController = new AbortController();
+  const timer = window.setTimeout(
+    () => timeoutController.abort(),
+    REQUEST_TIMEOUT_MS,
+  );
+  const callerSignal = options.signal;
+  const onCallerAbort = () => timeoutController.abort();
+  callerSignal?.addEventListener('abort', onCallerAbort);
+
+  let response: Response;
 
   try {
     response = await fetch(`${API_URL}${path}`, {
-      credentials: 'omit',
       ...options,
+      credentials: 'include',
       headers,
+      signal: timeoutController.signal,
     });
-  } catch {
+  } catch (error) {
+    if (callerSignal?.aborted) throw error;
+    if (isAbortError(error)) {
+      throw new ApiError(0, 'The server took too long to respond.');
+    }
     throw new ApiError(0, 'Cannot reach the server. Check your connection.');
+  } finally {
+    window.clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
   }
 
-  const isJson = response.headers.get('content-type')?.includes('application/json');
+  const isJson = response.headers
+    .get('content-type')
+    ?.includes('application/json');
   const payload = isJson ? await response.json().catch(() => null) : null;
 
   if (!response.ok) {
-    throw new ApiError(response.status, payload?.message || 'Request failed.', payload?.details);
+    if (response.status === 403 && /security token/i.test(payload?.message || '')) {
+      csrfToken = null;
+    }
+    throw new ApiError(
+      response.status,
+      payload?.message || 'Request failed.',
+      payload?.details,
+      payload?.requestId,
+    );
   }
+
   return payload as T;
 }
 
+const errorText = (error: unknown, fallback: string) =>
+  error instanceof ApiError ? error.message : fallback;
+
+async function uploadPrescriptionFile(file: File): Promise<string> {
+  const body = new FormData();
+  body.append('image', file);
+
+  const data = await api<{ uploadToken: string }>('/api/uploads/prescription', {
+    method: 'POST',
+    body,
+  });
+
+  return data.uploadToken;
+}
+
+async function revertPrescription(uploadToken: string) {
+  try {
+    await api('/api/uploads/prescription/revert', {
+      method: 'POST',
+      body: JSON.stringify({ uploadToken }),
+    });
+  } catch {
+    // Server-side cleanup jobs should remain a second safety net in production.
+  }
+}
+
 /* ================================================================== */
-/*  Hooks                                                             */
+/*  Hooks                                                              */
 /* ================================================================== */
+
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+
+  return debounced;
+}
 
 function useBodyScrollLock(locked: boolean) {
   useEffect(() => {
     if (!locked) return;
+
     const { overflow, paddingRight } = document.body.style;
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth;
+
     document.body.style.overflow = 'hidden';
-    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
     return () => {
       document.body.style.overflow = overflow;
       document.body.style.paddingRight = paddingRight;
@@ -270,26 +640,330 @@ function useBodyScrollLock(locked: boolean) {
 function useEscapeKey(active: boolean, onEscape: () => void) {
   useEffect(() => {
     if (!active) return;
+
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onEscape();
     };
+
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [active, onEscape]);
 }
 
-function useReturnFocus(active: boolean, panelRef: React.RefObject<HTMLElement>) {
+function useFocusTrap<T extends HTMLElement>(
+  active: boolean,
+  panelRef: React.RefObject<T | null>,
+) {
   useEffect(() => {
     if (!active) return;
+
+    const panel = panelRef.current;
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus({ preventScroll: true });
-    return () => previouslyFocused?.focus?.({ preventScroll: true });
+    panel?.focus({ preventScroll: true });
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !panel) return;
+
+      const focusable = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => element.offsetParent !== null);
+
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus({ preventScroll: true });
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKey);
+
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      previouslyFocused?.focus?.({ preventScroll: true });
+    };
   }, [active, panelRef]);
 }
 
+function useOutsideClick<T extends HTMLElement>(
+  active: boolean,
+  ref: React.RefObject<T | null>,
+  onOutside: () => void,
+) {
+  useEffect(() => {
+    if (!active) return;
+
+    const handle = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        onOutside();
+      }
+    };
+
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [active, ref, onOutside]);
+}
+
 /* ================================================================== */
-/*  Shared UI pieces                                                  */
+/*  Primitive components                                               */
 /* ================================================================== */
+
+const LotusMark = memo(function LotusMark({
+  size = 22,
+  className = '',
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M12 21c-4.5 0-8-2.6-8-5.9 0-1 .4-1.9 1-2.7 1.2 1.4 2.7 2.3 4 2.7-1.4-1.7-2.3-3.9-2.3-6.1 0-1.4.4-2.7 1-3.9 1.4.8 2.6 2 3.4 3.4.8-1.5 2-2.7 3.4-3.4.6 1.2 1 2.5 1 3.9 0 2.2-.9 4.4-2.3 6.1 1.3-.4 2.8-1.3 4-2.7.6.8 1 1.7 1 2.7C20 18.4 16.5 21 12 21Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+});
+
+const Sparkline = memo(function Sparkline({
+  values,
+  tone = '#0B7A6B',
+  width = 64,
+  height = 22,
+}: {
+  values: number[];
+  tone?: string;
+  width?: number;
+  height?: number;
+}) {
+  if (!values || values.length < 2) return null;
+
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = max - min || 1;
+  const step = width / (values.length - 1);
+
+  const points = values
+    .map((value, index) => {
+      const x = index * step;
+      const y = height - ((value - min) / span) * (height - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      fill="none"
+      aria-hidden="true"
+    >
+      <polyline
+        points={points}
+        stroke={tone}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </svg>
+  );
+});
+
+const Sheet = memo(function Sheet({
+  open,
+  onClose,
+  title,
+  icon,
+  description,
+  children,
+  footer,
+  variant = 'side',
+  width = 'md',
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  icon?: React.ReactNode;
+  description?: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  variant?: 'side' | 'center';
+  width?: 'sm' | 'md' | 'lg';
+}) {
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const drag = useRef({ startY: 0, delta: 0, active: false });
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const frame = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(frame);
+    }
+
+    setVisible(false);
+    const timer = window.setTimeout(() => setMounted(false), 320);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  useBodyScrollLock(mounted);
+  useEscapeKey(mounted, onClose);
+  useFocusTrap(mounted, panelRef);
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (window.innerWidth >= 640) return;
+
+    drag.current = {
+      startY: event.clientY,
+      delta: 0,
+      active: true,
+    };
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!drag.current.active || !panelRef.current) return;
+
+    drag.current.delta = Math.max(0, event.clientY - drag.current.startY);
+    panelRef.current.style.transition = 'none';
+    panelRef.current.style.transform = `translateY(${drag.current.delta}px)`;
+  };
+
+  const handlePointerUp = () => {
+    if (!drag.current.active) return;
+
+    drag.current.active = false;
+
+    if (panelRef.current) {
+      panelRef.current.style.transition = '';
+      panelRef.current.style.transform = '';
+    }
+
+    if (drag.current.delta > 110) onClose();
+  };
+
+  if (!mounted) return null;
+
+  const widthClass =
+    width === 'lg'
+      ? 'sm:max-w-[38rem]'
+      : width === 'sm'
+        ? 'sm:max-w-[24rem]'
+        : 'sm:max-w-[29rem]';
+
+  const panelPosition =
+    variant === 'side'
+      ? `w-full ${widthClass} h-[92vh] sm:h-full rounded-t-[30px] sm:rounded-none sm:rounded-l-[30px]`
+      : `w-full ${widthClass} max-h-[92vh] sm:max-h-[88vh] rounded-t-[30px] sm:rounded-[30px]`;
+
+  const hiddenTransform =
+    variant === 'side'
+      ? 'translate-y-full sm:translate-y-0 sm:translate-x-full'
+      : 'translate-y-full sm:translate-y-2 sm:scale-[0.97] sm:opacity-0';
+
+  const shownTransform =
+    variant === 'side'
+      ? 'translate-y-0 sm:translate-x-0'
+      : 'translate-y-0 sm:scale-100 sm:opacity-100';
+
+  return (
+    <div
+      className={cx(
+        'fixed inset-0 z-[80] flex items-end',
+        variant === 'side'
+          ? 'sm:items-stretch sm:justify-end'
+          : 'sm:items-center sm:justify-center sm:p-4',
+      )}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div
+        className={cx(
+          'absolute inset-0 bg-[#07110F]/45 backdrop-blur-[6px] transition-opacity duration-300',
+          visible ? 'opacity-100' : 'opacity-0',
+        )}
+        onClick={onClose}
+      />
+
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className={cx(
+          'lp-panel relative flex flex-col overflow-hidden bg-white shadow-[0_-20px_60px_-20px_rgba(7,17,15,0.35)] outline-none sm:shadow-[0_30px_90px_-30px_rgba(7,17,15,0.5)]',
+          panelPosition,
+          visible ? shownTransform : hiddenTransform,
+        )}
+      >
+        <div
+          className="shrink-0 cursor-grab touch-none pb-1 pt-2.5 active:cursor-grabbing sm:hidden"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+        >
+          <span className="mx-auto block h-1.5 w-11 rounded-full bg-[#0B1220]/[0.15]" />
+        </div>
+
+        <header className="flex shrink-0 items-start justify-between gap-4 px-6 pb-4 pt-3 sm:pt-6">
+          <div className="min-w-0">
+            <h2 className="flex items-center gap-2.5 text-[22px] font-semibold tracking-[-0.02em] text-[#0B1220]">
+              {icon}
+              {title}
+            </h2>
+            {description && (
+              <p className="mt-1 text-[13px] text-[#0B1220]/55">
+                {description}
+              </p>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={`Close ${title}`}
+            className="lp-press mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0B1220]/[0.06] text-[#0B1220]/60 hover:bg-[#0B1220]/10 hover:text-[#0B1220]"
+          >
+            <X size={18} strokeWidth={2.4} />
+          </button>
+        </header>
+
+        <div className="lp-scroll flex-1 overflow-y-auto overscroll-contain px-5 pb-8">
+          {children}
+        </div>
+
+        {footer && (
+          <footer className="shrink-0 border-t border-[#0B1220]/[0.08] bg-white/90 px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] backdrop-blur-xl">
+            {footer}
+          </footer>
+        )}
+      </div>
+    </div>
+  );
+});
 
 const Field = memo(function Field({
   name,
@@ -304,6 +978,7 @@ const Field = memo(function Field({
   placeholder,
   step,
   readOnly,
+  hint,
 }: {
   name: string;
   label: string;
@@ -317,13 +992,19 @@ const Field = memo(function Field({
   placeholder?: string;
   step?: string;
   readOnly?: boolean;
+  hint?: string;
 }) {
   const id = `field-${name}`;
+
   return (
     <div className="group/field relative w-full">
-      <label htmlFor={id} className="mb-1.5 block text-xs font-bold tracking-wide text-gray-500 transition-colors group-focus-within/field:text-indigo-600">
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-[13px] font-medium text-[#0B1220]/55 transition-colors group-focus-within/field:text-[#0B7A6B]"
+      >
         {label}
       </label>
+
       <input
         id={id}
         name={name}
@@ -337,19 +1018,232 @@ const Field = memo(function Field({
         onChange={onChange}
         readOnly={readOnly}
         aria-invalid={Boolean(error)}
-        aria-describedby={error ? `${id}-error` : undefined}
-        className={`w-full rounded-xl border bg-white px-4 py-3 text-sm font-medium text-gray-900 outline-none transition-all duration-300 ease-out placeholder:font-normal placeholder:text-gray-400 focus:-translate-y-[1px] focus:shadow-md focus:ring-4 ${
+        aria-describedby={
+          error ? `${id}-error` : hint ? `${id}-hint` : undefined
+        }
+        className={cx(
+          'w-full rounded-2xl border bg-[#0B1220]/[0.03] px-4 py-3 text-[15px] text-[#0B1220] outline-none transition-all duration-300 placeholder:text-[#0B1220]/30',
+          'focus:bg-white focus:shadow-[0_10px_30px_-16px_rgba(11,122,107,0.55)]',
           error
-            ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100'
-            : 'border-gray-200 hover:border-gray-300 focus:border-indigo-600 focus:ring-indigo-600/10'
-        } ${readOnly ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''}`}
+            ? 'border-rose-300 focus:border-rose-400'
+            : 'border-transparent hover:border-[#0B1220]/10 focus:border-[#0B7A6B]',
+          readOnly && 'cursor-not-allowed opacity-60',
+        )}
       />
+
+      {hint && !error && (
+        <p id={`${id}-hint`} className="mt-1.5 text-[12px] text-[#0B1220]/45">
+          {hint}
+        </p>
+      )}
+
       {error && (
-        <p id={`${id}-error`} className="animate-wobble mt-1.5 flex items-center gap-1 text-[11px] font-bold tracking-wide text-rose-600">
-          <AlertCircle size={12} strokeWidth={2.5} aria-hidden="true" />
+        <p
+          id={`${id}-error`}
+          className="lp-wobble mt-1.5 flex items-center gap-1.5 text-[12px] font-medium text-rose-600"
+        >
+          <AlertCircle size={13} strokeWidth={2.5} aria-hidden="true" />
           {error}
         </p>
       )}
+    </div>
+  );
+});
+
+const Toggle = memo(function Toggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-4 text-[14px] text-[#0B1220]">
+      <span>{label}</span>
+
+      <span className="relative inline-flex shrink-0">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          className="peer sr-only"
+        />
+        <span
+          aria-hidden="true"
+          className="h-[30px] w-[51px] rounded-full bg-[#0B1220]/[0.15] transition-colors duration-300 peer-checked:bg-[#0B7A6B] peer-focus-visible:ring-2 peer-focus-visible:ring-[#0B7A6B]/40 peer-focus-visible:ring-offset-2"
+        />
+        <span
+          aria-hidden="true"
+          className="lp-knob pointer-events-none absolute left-[2px] top-[2px] h-[26px] w-[26px] rounded-full bg-white shadow-[0_2px_6px_rgba(11,18,32,0.3)] peer-checked:translate-x-[21px]"
+        />
+      </span>
+    </label>
+  );
+});
+
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  ariaLabel,
+  size = 'md',
+}: {
+  options: Array<{ value: T; label: string; icon?: React.ReactNode }>;
+  value: T;
+  onChange: (next: T) => void;
+  ariaLabel: string;
+  size?: 'sm' | 'md';
+}) {
+  const index = Math.max(
+    0,
+    options.findIndex((option) => option.value === value),
+  );
+
+  return (
+    <div
+      role="tablist"
+      aria-label={ariaLabel}
+      className={cx(
+        'relative flex w-full rounded-full bg-[#0B1220]/[0.06] p-1',
+        size === 'sm' ? 'text-[12px]' : 'text-[13px]',
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className="lp-seg absolute inset-y-1 left-1 rounded-full bg-white shadow-[0_2px_10px_rgba(11,18,32,0.12)]"
+        style={{
+          width: `calc((100% - 0.5rem) / ${options.length})`,
+          transform: `translateX(${index * 100}%)`,
+        }}
+      />
+
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="tab"
+          aria-selected={option.value === value}
+          onClick={() => onChange(option.value)}
+          className={cx(
+            'relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-full py-2 font-medium transition-colors duration-200',
+            option.value === value
+              ? 'text-[#0B1220]'
+              : 'text-[#0B1220]/50 hover:text-[#0B1220]/75',
+          )}
+        >
+          {option.icon}
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const SelectShell = memo(function SelectShell({
+  id,
+  label,
+  value,
+  onChange,
+  children,
+  className = '',
+  compact,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: React.ReactNode;
+  className?: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cx('relative', className)}>
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={cx(
+          'w-full appearance-none rounded-full border border-[#0B1220]/10 bg-white pr-9 font-semibold text-[#0B1220] outline-none transition-colors hover:bg-[#0B1220]/[0.02] focus:ring-2 focus:ring-[#0B7A6B]/30',
+          compact ? 'py-2 pl-3.5 text-[12.5px]' : 'py-2.5 pl-4 text-[13px]',
+        )}
+      >
+        {children}
+      </select>
+
+      <ChevronDown
+        size={15}
+        strokeWidth={2.6}
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#0B1220]/35"
+        aria-hidden="true"
+      />
+    </div>
+  );
+});
+
+const SearchInput = memo(function SearchInput({
+  value,
+  onChange,
+  busy,
+  placeholder = 'Search medicines, brands or symptoms',
+  id = 'medicine-search',
+  label = 'Search medicines',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  busy?: boolean;
+  placeholder?: string;
+  id?: string;
+  label?: string;
+}) {
+  return (
+    <div className="group relative w-full">
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+
+      <Search
+        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#0B1220]/35 transition-colors group-focus-within:text-[#0B7A6B]"
+        size={17}
+        strokeWidth={2.4}
+        aria-hidden="true"
+      />
+
+      <input
+        id={id}
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        maxLength={60}
+        className="w-full rounded-full border border-transparent bg-[#0B1220]/[0.05] py-3 pl-11 pr-11 text-[15px] text-[#0B1220] outline-none transition-all duration-300 placeholder:text-[#0B1220]/35 focus:border-[#0B7A6B]/30 focus:bg-white focus:shadow-[0_12px_36px_-20px_rgba(11,122,107,0.7)]"
+      />
+
+      <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+        {busy ? (
+          <Loader2
+            size={15}
+            className="animate-spin text-[#0B7A6B]"
+            aria-hidden="true"
+          />
+        ) : (
+          value && (
+            <button
+              type="button"
+              onClick={() => onChange('')}
+              aria-label="Clear search"
+              className="lp-press flex h-6 w-6 items-center justify-center rounded-full bg-[#0B1220]/10 text-[#0B1220]/60 hover:bg-[#0B1220]/[0.15]"
+            >
+              <X size={13} strokeWidth={3} />
+            </button>
+          )
+        )}
+      </div>
     </div>
   );
 });
@@ -366,70 +1260,37 @@ const QuantityStepper = memo(function QuantityStepper({
   label: string;
 }) {
   return (
-    <div className="flex items-center rounded-xl border border-indigo-100 bg-indigo-50/50 shadow-sm transition-all hover:bg-indigo-50 hover:border-indigo-200">
+    <div className="flex items-center rounded-full bg-[#0B1220]/[0.06] p-1">
       <button
         type="button"
         onClick={onDecrease}
-        aria-label={qty === 1 ? `Remove ${label}` : `Decrease ${label}`}
-        className="flex h-8 w-8 items-center justify-center rounded-l-xl text-indigo-700 transition-colors hover:bg-indigo-100/70"
+        aria-label={qty === 1 ? `Remove ${label}` : `One less ${label}`}
+        className="lp-press flex h-7 w-7 items-center justify-center rounded-full bg-white text-[#0B1220] shadow-sm"
       >
-        {qty === 1 ? <Trash2 size={14} strokeWidth={2.5} /> : <Minus size={14} strokeWidth={2.5} />}
+        {qty === 1 ? (
+          <Trash2 size={13} strokeWidth={2.4} />
+        ) : (
+          <Minus size={14} strokeWidth={2.6} />
+        )}
       </button>
-      <div className="relative flex min-w-[2rem] items-center justify-center overflow-hidden">
-        <span aria-live="polite" className="text-center text-sm font-extrabold tabular-nums text-indigo-900">
-          {qty}
-        </span>
-      </div>
+
+      <span
+        key={qty}
+        aria-live="polite"
+        className="lp-count min-w-[2rem] text-center text-[14px] font-semibold tabular-nums"
+      >
+        {qty}
+      </span>
+
       <button
         type="button"
         onClick={onIncrease}
         disabled={qty >= MAX_QTY_PER_ITEM}
-        aria-label={`Increase ${label}`}
-        className="flex h-8 w-8 items-center justify-center rounded-r-xl text-indigo-700 transition-colors hover:bg-indigo-100/70 disabled:opacity-40"
+        aria-label={`One more ${label}`}
+        className="lp-press flex h-7 w-7 items-center justify-center rounded-full bg-white text-[#0B1220] shadow-sm disabled:opacity-40"
       >
-        <Plus size={14} strokeWidth={2.5} />
+        <Plus size={14} strokeWidth={2.6} />
       </button>
-    </div>
-  );
-});
-
-const SearchInput = memo(function SearchInput({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="group relative w-full">
-      <label htmlFor="medicine-search" className="sr-only">
-        Search medicines
-      </label>
-      <Search
-        className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 transition-colors group-focus-within:text-indigo-600"
-        size={17}
-        strokeWidth={2.5}
-        aria-hidden="true"
-      />
-      <input
-        id="medicine-search"
-        type="search"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="Search by name, category, or symptom..."
-        maxLength={60}
-        className="w-full rounded-2xl border border-gray-200/80 bg-gray-50/50 py-3 pl-10 pr-10 text-sm font-medium text-gray-800 outline-none backdrop-blur-sm transition-all duration-300 ease-out placeholder:font-normal placeholder:text-gray-400 focus:border-indigo-500 focus:bg-white focus:shadow-md focus:ring-4 focus:ring-indigo-500/10"
-      />
-      <div className={`absolute right-2 top-1/2 -translate-y-1/2 transition-all duration-200 ${value ? 'scale-100 opacity-100' : 'scale-75 opacity-0 pointer-events-none'}`}>
-        <button
-          type="button"
-          onClick={() => onChange('')}
-          aria-label="Clear search"
-          className="rounded-full p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-        >
-          <X size={15} strokeWidth={2.5} />
-        </button>
-      </div>
     </div>
   );
 });
@@ -442,8 +1303,14 @@ const ProductThumb = memo(function ProductThumb({
   className?: string;
 }) {
   const [loaded, setLoaded] = useState(false);
-  
-  if (medicine.imageUrl) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [medicine.imageUrl]);
+
+  if (medicine.imageUrl && !failed) {
     return (
       <img
         src={medicine.imageUrl}
@@ -451,13 +1318,43 @@ const ProductThumb = memo(function ProductThumb({
         loading="lazy"
         decoding="async"
         onLoad={() => setLoaded(true)}
-        className={`h-full w-full object-cover transition-all duration-500 ${loaded ? 'opacity-100' : 'opacity-0 scale-95'} ${className}`}
+        onError={() => setFailed(true)}
+        className={cx(
+          'h-full w-full object-cover transition-all duration-700',
+          loaded ? 'scale-100 opacity-100' : 'scale-[1.04] opacity-0',
+          className,
+        )}
       />
     );
   }
+
   return (
-    <span className={`text-4xl transition-transform duration-300 ${className}`} role="img" aria-label={medicine.name}>
+    <span
+      className={cx('text-4xl', className)}
+      role="img"
+      aria-label={medicine.name}
+    >
       {medicine.emoji || '💊'}
+    </span>
+  );
+});
+
+const OrderStatusPill = memo(function OrderStatusPill({
+  status,
+}: {
+  status: OrderStatus;
+}) {
+  return (
+    <span
+      className={cx(
+        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[12px] font-semibold',
+        ORDER_STATUS_STYLE[status],
+      )}
+    >
+      {status === 'delivered' && (
+        <CheckCircle2 size={13} strokeWidth={2.6} aria-hidden="true" />
+      )}
+      {ORDER_STATUS_LABEL[status]}
     </span>
   );
 });
@@ -468,6 +1365,8 @@ const BranchPicker = memo(function BranchPicker({
   distance,
   status,
   errorMessage,
+  loading,
+  branchError,
   onDetect,
   onSelect,
 }: {
@@ -476,73 +1375,112 @@ const BranchPicker = memo(function BranchPicker({
   distance: number | null;
   status: LocateStatus;
   errorMessage: string | null;
+  loading: boolean;
+  branchError: string | null;
   onDetect: () => void;
   onSelect: (branchId: string) => void;
 }) {
-  if (!selected) return null;
+  if (loading) {
+    return (
+      <section className="rounded-[26px] bg-[#0B1220]/[0.035] p-5 text-center">
+        <Loader2 className="mx-auto animate-spin text-[#0B7A6B]" size={20} />
+        <p className="mt-2 text-[13px] text-[#0B1220]/55">
+          Loading available branches
+        </p>
+      </section>
+    );
+  }
+
+  if (branchError) {
+    return (
+      <section className="rounded-[26px] bg-rose-50 p-4 text-[13px] font-medium text-rose-700">
+        <div className="flex items-start gap-2">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <span>{branchError}</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (!selected) {
+    return (
+      <section className="rounded-[26px] bg-amber-50 p-4 text-[13px] font-medium text-amber-700">
+        No active branch is accepting orders right now.
+      </section>
+    );
+  }
 
   return (
-    <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-shadow">
-      <header className="mb-4 flex items-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-          <Store size={15} strokeWidth={2.5} aria-hidden="true" />
-        </span>
-        <h3 className="text-sm font-bold tracking-tight text-gray-900">Order Routing</h3>
-      </header>
+    <section className="rounded-[26px] bg-[#0B1220]/[0.035] p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 text-[15px] font-semibold text-[#0B1220]">
+          <Store
+            size={16}
+            strokeWidth={2.4}
+            className="text-[#0B7A6B]"
+            aria-hidden="true"
+          />
+          Sending to
+        </h3>
 
-      <div className="mb-4 flex items-center justify-between gap-3 rounded-xl bg-gray-50 p-4 border border-gray-100">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-extrabold text-gray-900">{selected.name}</p>
-          <p className="mt-0.5 truncate text-xs font-medium text-gray-500">{selected.address}</p>
-        </div>
         {distance !== null && (
-          <span className="shrink-0 rounded-full bg-indigo-600 px-2.5 py-1 text-[10px] font-bold tracking-wide text-white tabular-nums shadow-sm">
-            {distance.toFixed(1)} km
+          <span className="rounded-full bg-[#0B7A6B] px-2.5 py-1 text-[11px] font-semibold tabular-nums text-white">
+            {distance.toFixed(1)} km straight-line
           </span>
         )}
       </div>
 
-      <div className="flex flex-col gap-2.5 sm:flex-row">
+      <div className="rounded-[20px] bg-white p-4 shadow-[0_1px_2px_rgba(11,18,32,0.05)]">
+        <p className="truncate text-[15px] font-semibold text-[#0B1220]">
+          {selected.name}
+        </p>
+        <p className="mt-0.5 truncate text-[13px] text-[#0B1220]/55">
+          {selected.address}
+        </p>
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2.5 sm:flex-row">
         <button
           type="button"
           onClick={onDetect}
           disabled={status === 'loading'}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-indigo-200/60 bg-indigo-50/50 py-3 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100/50 disabled:opacity-60"
+          className="lp-press flex flex-1 items-center justify-center gap-2 rounded-2xl bg-white py-3 text-[13px] font-semibold text-[#0B7A6B] shadow-[0_1px_2px_rgba(11,18,32,0.06)] hover:bg-[#E6F4F1] disabled:opacity-60"
         >
           {status === 'loading' ? (
             <>
-              <Loader2 size={15} className="animate-spin" aria-hidden="true" /> Locating...
+              <Loader2 size={15} className="animate-spin" />
+              Finding you
             </>
           ) : (
             <>
-              <Navigation size={15} strokeWidth={2.5} aria-hidden="true" /> Find Closest
+              <Navigation size={15} strokeWidth={2.4} />
+              Find nearest
             </>
           )}
         </button>
 
-        <div className="flex-1 relative group">
-          <label htmlFor="branch-select" className="sr-only">Choose a branch</label>
-          <select
-            id="branch-select"
-            value={selected._id}
-            onChange={(event) => onSelect(event.target.value)}
-            className="w-full appearance-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-bold text-gray-700 outline-none transition-all duration-300 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10 hover:border-gray-300 cursor-pointer"
-          >
-            {branches.map((branch) => (
-              <option key={branch._id} value={branch._id}>
-                {branch.name} — {branch.address}
-              </option>
-            ))}
-          </select>
-          <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 group-hover:text-gray-600 transition-colors">
-            <ChevronLeft size={14} strokeWidth={2.5} className="-rotate-90" />
-          </div>
-        </div>
+        <SelectShell
+          id="branch-select"
+          label="Choose a branch"
+          value={selected._id}
+          onChange={onSelect}
+          className="flex-1"
+        >
+          {branches.map((branch) => (
+            <option key={branch._id} value={branch._id}>
+              {branch.name} — {branch.address}
+            </option>
+          ))}
+        </SelectShell>
       </div>
 
       {status === 'error' && errorMessage && (
-        <p className="animate-wobble mt-3 flex items-start gap-1.5 text-[11px] font-bold text-rose-600">
-          <AlertCircle size={13} strokeWidth={2.5} className="shrink-0" aria-hidden="true" />
+        <p className="lp-wobble mt-3 flex items-start gap-1.5 rounded-2xl bg-rose-50 p-3 text-[12px] font-medium text-rose-700">
+          <AlertCircle
+            size={14}
+            strokeWidth={2.5}
+            className="mt-px shrink-0"
+          />
           {errorMessage}
         </p>
       )}
@@ -552,168 +1490,492 @@ const BranchPicker = memo(function BranchPicker({
 
 const ProductCard = memo(function ProductCard({
   medicine,
+  index,
+  selectedBranchId,
   cartQuantities,
   onAdd,
   onUpdateQty,
 }: {
   medicine: Medicine;
   index: number;
+  selectedBranchId?: string;
   cartQuantities: Record<string, number>;
   onAdd: (medicine: Medicine, buyType: BuyType) => void;
   onUpdateQty: (cartItemId: string, delta: number) => void;
 }) {
   const [buyType, setBuyType] = useState<BuyType>('full');
-  const isLoose = buyType === 'loose';
+  const [justAdded, setJustAdded] = useState(false);
+  const addedTimer = useRef<number | null>(null);
 
-  const price = isLoose ? medicine.price / medicine.packSize : medicine.price;
-  const mrp = isLoose ? medicine.mrp / medicine.packSize : medicine.mrp;
+  useEffect(
+    () => () => {
+      if (addedTimer.current) window.clearTimeout(addedTimer.current);
+    },
+    [],
+  );
+
+  const divisor = Math.max(1, medicine.packSize);
+  const isLoose = buyType === 'loose';
+  const price = isLoose ? medicine.price / divisor : medicine.price;
+  const mrp = isLoose ? medicine.mrp / divisor : medicine.mrp;
   const discount = mrp > price ? Math.round(((mrp - price) / mrp) * 100) : 0;
+
+  const inventory = getInventoryForBranch(medicine, selectedBranchId);
+  const inStock = Boolean(
+    inventory &&
+      inventory.isAvailable &&
+      inventory.stockUnits >=
+        (isLoose ? 1 : medicine.isDivisible ? medicine.packSize : 1),
+  );
+
+  const stockLabel =
+    inventory && inventory.isAvailable
+      ? medicine.isDivisible
+        ? `${availableFullPacks(medicine, selectedBranchId) ?? 0} pack(s) equivalent`
+        : `${inventory.stockUnits} in stock`
+      : 'Out of stock';
 
   const cartItemId = `${medicine._id}-${buyType}`;
   const qtyInCart = cartQuantities[cartItemId] ?? 0;
 
-  return (
-    <article className="group relative flex h-full flex-col rounded-2xl border border-gray-200/80 bg-white p-3.5 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-indigo-300/50 hover:shadow-xl hover:shadow-indigo-900/5">
-      {medicine.tag && (
-        <span className="absolute left-3.5 top-3.5 z-10 rounded-full bg-gray-900 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-white shadow-sm">
-          {medicine.tag}
-        </span>
-      )}
-      {discount > 0 && (
-        <span className="absolute right-3.5 top-3.5 z-10 rounded-full bg-emerald-100/80 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-emerald-800 shadow-sm border border-emerald-200/50 backdrop-blur-md">
-          {discount}% off
-        </span>
-      )}
+  const handleAdd = () => {
+    onAdd(medicine, buyType);
+    setJustAdded(true);
 
-      <div className="mb-4 flex h-36 w-full items-center justify-center overflow-hidden rounded-xl bg-gray-50/50 ring-1 ring-inset ring-gray-100 transition-colors group-hover:bg-gray-50">
+    if (addedTimer.current) window.clearTimeout(addedTimer.current);
+    addedTimer.current = window.setTimeout(() => setJustAdded(false), 900);
+  };
+
+  return (
+    <article
+      className="lp-rise group relative flex h-full flex-col rounded-[26px] bg-white p-2.5 shadow-[0_1px_2px_rgba(11,18,32,0.05)] transition-[transform,box-shadow] duration-300 hover:-translate-y-1 hover:shadow-[0_24px_50px_-30px_rgba(11,18,32,0.45)]"
+      style={{ animationDelay: `${Math.min(index, 11) * 30}ms` }}
+    >
+      <div className="relative mb-3 flex aspect-square w-full items-center justify-center overflow-hidden rounded-[20px] bg-[#0B1220]/[0.035]">
         <ProductThumb
           medicine={medicine}
-          className="transition-transform duration-500 ease-out group-hover:scale-110"
+          className="transition-transform duration-500 group-hover:scale-105"
         />
+
+        {medicine.tag && (
+          <span className="absolute left-2.5 top-2.5 rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-[#0B1220] shadow-sm backdrop-blur">
+            {medicine.tag}
+          </span>
+        )}
+
+        {discount > 0 && (
+          <span className="absolute right-2.5 top-2.5 rounded-full bg-[#0B7A6B] px-2 py-1 text-[11px] font-semibold tabular-nums text-white">
+            −{discount}%
+          </span>
+        )}
+
+        {medicine.requiresPrescription && (
+          <span className="absolute bottom-2.5 left-2.5 flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-[11px] font-medium text-rose-600 shadow-sm backdrop-blur">
+            <FileText size={11} strokeWidth={2.5} />
+            Prescription
+          </span>
+        )}
       </div>
 
-      <div className="flex-1">
-        <h3 className="mb-1 line-clamp-2 text-sm font-bold leading-snug tracking-tight text-gray-900 group-hover:text-indigo-700 transition-colors" title={medicine.name}>
+      <div className="flex flex-1 flex-col px-1.5 pb-1.5">
+        <h3
+          className="line-clamp-2 text-[15px] font-semibold leading-snug tracking-[-0.01em]"
+          title={medicine.name}
+        >
           {medicine.name}
         </h3>
-        <p className="mb-2.5 line-clamp-1 text-[11px] font-medium text-gray-500">{medicine.use}</p>
-        
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          <span className="flex w-fit items-center gap-1 rounded border border-gray-200/80 bg-gray-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-600">
-            <Info size={10} aria-hidden="true" />
-            {medicine.isDivisible
-              ? `1 ${medicine.packType} = ${medicine.packSize} ${medicine.unitType}s`
-              : `1 ${medicine.packType}`}
-          </span>
-          {medicine.requiresPrescription && (
-            <span className="flex w-fit items-center gap-1 rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-rose-700">
-              <FileText size={10} aria-hidden="true" /> Rx
+
+        <p className="mt-1 line-clamp-1 text-[12.5px] text-[#0B1220]/50">
+          {medicine.use}
+        </p>
+
+        <p
+          className={cx(
+            'mt-2 text-[11.5px] font-medium',
+            inStock ? 'text-emerald-600' : 'text-rose-500',
+          )}
+        >
+          {stockLabel}
+        </p>
+
+        {medicine.isDivisible && (
+          <div className="mt-3">
+            <Segmented<BuyType>
+              size="sm"
+              ariaLabel={`How to buy ${medicine.name}`}
+              value={buyType}
+              onChange={setBuyType}
+              options={[
+                {
+                  value: 'full',
+                  label: `Full ${medicine.packType.toLowerCase()}`,
+                },
+                {
+                  value: 'loose',
+                  label: `Single ${medicine.unitType.toLowerCase()}`,
+                },
+              ]}
+            />
+          </div>
+        )}
+
+        <div className="mt-auto flex items-end justify-between gap-2 pt-4">
+          <div>
+            {discount > 0 && (
+              <span className="block text-[12px] tabular-nums text-[#0B1220]/35 line-through">
+                {formatMoney(mrp)}
+              </span>
+            )}
+            <span className="block text-[17px] font-semibold leading-none tracking-[-0.02em] tabular-nums">
+              {formatMoney(price)}
             </span>
-          )}
-        </div>
-      </div>
+          </div>
 
-      {medicine.isDivisible && (
-        <div role="group" aria-label="Choose pack size" className="mb-3 flex rounded-lg bg-gray-100/80 p-1 shadow-inner">
-          {(['full', 'loose'] as const).map((option) => {
-            const active = buyType === option;
-            return (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setBuyType(option)}
-                className={`flex-1 rounded-md py-1.5 text-[10px] font-extrabold transition-all duration-300 ${
-                  active ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                }`}
-              >
-                {option === 'full' ? `Full ${medicine.packType}` : `1 ${medicine.unitType}`}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="mt-auto flex items-end justify-between gap-2 border-t border-dashed border-gray-200 pt-3">
-        <div className="flex flex-col">
-          {discount > 0 && (
-            <span className="text-[10px] font-semibold text-gray-400 line-through tabular-nums decoration-gray-300">{formatMoney(mrp)}</span>
-          )}
-          <span className="text-base font-black leading-none tracking-tight text-gray-900 tabular-nums">{formatMoney(price)}</span>
-        </div>
-
-        {qtyInCart > 0 ? (
-          <div className="origin-bottom-right">
+          {qtyInCart > 0 ? (
             <QuantityStepper
               qty={qtyInCart}
               label={medicine.name}
               onDecrease={() => onUpdateQty(cartItemId, -1)}
               onIncrease={() => onUpdateQty(cartItemId, 1)}
             />
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onAdd(medicine, buyType)}
-            className="flex items-center gap-1 rounded-xl bg-gray-900 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-indigo-600 hover:shadow-md hover:shadow-indigo-600/20 active:scale-95"
-          >
-            Add
-          </button>
-        )}
+          ) : (
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={!inStock}
+              aria-label={
+                inStock
+                  ? `Add ${medicine.name} to cart`
+                  : `${medicine.name} is out of stock`
+              }
+              className={cx(
+                'lp-press flex h-10 w-10 items-center justify-center rounded-full text-white disabled:cursor-not-allowed disabled:bg-[#0B1220]/20',
+                justAdded
+                  ? 'bg-[#0B7A6B]'
+                  : 'bg-[#0B1220] hover:bg-[#0B7A6B]',
+              )}
+            >
+              {justAdded ? (
+                <Check size={18} strokeWidth={3} className="lp-pop" />
+              ) : (
+                <Plus size={18} strokeWidth={3} />
+              )}
+            </button>
+          )}
+        </div>
       </div>
     </article>
   );
 });
 
+const StoreMap = memo(function StoreMap({ branches }: { branches: Branch[] }) {
+  const [activeTab, setActiveTab] = useState<string | null>(
+    branches[0]?._id || null
+  );
+
+  if (!branches || branches.length === 0) return null;
+
+  const activeBranch = branches.find((b) => b._id === activeTab) || branches[0];
+
+  return (
+    <section className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mb-8 text-center">
+        <h2 className="text-[24px] font-semibold tracking-[-0.03em] sm:text-[28px]">
+          Our Branches in Goregaon, Mumbai
+        </h2>
+        <p className="mt-2 text-[14px] text-[#0B1220]/60">
+          Visit our offline stores for in-person consultation and immediate purchases.
+        </p>
+      </div>
+
+      <div className="flex flex-col overflow-hidden rounded-[32px] border border-[#0B1220]/10 bg-white shadow-sm lg:flex-row">
+        {/* Branch List */}
+        <div className="flex flex-col border-b border-[#0B1220]/10 bg-[#F8F9FA] lg:w-1/3 lg:border-b-0 lg:border-r">
+          {branches.map((branch) => (
+            <button
+              key={branch._id}
+              type="button"
+              onClick={() => setActiveTab(branch._id)}
+              className={cx(
+                'flex flex-col items-start border-b border-[#0B1220]/[0.05] p-5 text-left transition-colors last:border-0 hover:bg-[#E6F4F1]/50',
+                activeTab === branch._id ? 'bg-[#E6F4F1]' : 'bg-transparent'
+              )}
+            >
+              <h3 className={cx(
+                "text-[16px] font-semibold",
+                activeTab === branch._id ? "text-[#0B7A6B]" : "text-[#0B1220]"
+              )}>
+                {branch.name}
+              </h3>
+              <p className="mt-1 text-[13px] text-[#0B1220]/60">
+                {branch.address}
+              </p>
+              <div className="mt-3 flex items-center gap-4 text-[12px] font-medium text-[#0B1220]/50">
+                <span className="flex items-center gap-1">
+                  <Phone size={13} /> {branch.phone}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Navigation size={13} /> {branch.serviceRadiusKm}km delivery
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Google Map Embed */}
+        <div className="relative h-[300px] w-full bg-[#E5E7EB] lg:h-[450px] lg:w-2/3">
+          {activeBranch && (
+            <iframe
+              title={`Map to ${activeBranch.name}`}
+              width="100%"
+              height="100%"
+              style={{ border: 0 }}
+              loading="lazy"
+              allowFullScreen
+              referrerPolicy="no-referrer-when-downgrade"
+              src={`https://maps.google.com/maps?q=${activeBranch.lat},${activeBranch.lng}&t=m&z=15&output=embed&iwloc=near`}
+            />
+          )}
+        </div>
+      </div>
+    </section>
+  );
+});
+
+const DeliveryFields = memo(function DeliveryFields({
+  address,
+  errors,
+  onChange,
+  requireArea,
+}: {
+  address: AddressForm;
+  errors: FieldErrors;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  requireArea: boolean;
+}) {
+  return (
+    <section className="space-y-3.5 rounded-[26px] bg-[#0B1220]/[0.035] p-4">
+      <h3 className="text-[15px] font-semibold">Where should we deliver?</h3>
+
+      <Field
+        name="name"
+        label="Full name"
+        autoComplete="name"
+        value={address.name}
+        error={errors.name}
+        onChange={onChange}
+        maxLength={60}
+      />
+
+      <Field
+        name="phone"
+        label="Mobile number"
+        type="tel"
+        inputMode="numeric"
+        autoComplete="tel-national"
+        value={address.phone}
+        error={errors.phone}
+        onChange={onChange}
+        maxLength={10}
+        hint="Your order confirmation and status updates are sent to this number on WhatsApp."
+      />
+
+      {requireArea ? (
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <Field
+            name="houseNo"
+            label="House or flat"
+            autoComplete="address-line1"
+            value={address.houseNo}
+            error={errors.houseNo}
+            onChange={onChange}
+            maxLength={80}
+          />
+          <Field
+            name="area"
+            label="Area"
+            autoComplete="address-level3"
+            value={address.area}
+            error={errors.area}
+            onChange={onChange}
+            maxLength={80}
+          />
+        </div>
+      ) : (
+        <Field
+          name="houseNo"
+          label="Full address"
+          autoComplete="street-address"
+          value={address.houseNo}
+          error={errors.houseNo}
+          onChange={onChange}
+          maxLength={120}
+        />
+      )}
+
+      <Field
+        name="landmark"
+        label="Landmark (optional)"
+        value={address.landmark}
+        onChange={onChange}
+        maxLength={80}
+      />
+    </section>
+  );
+});
+
+function PrescriptionFilePicker({
+  file,
+  previewUrl,
+  error,
+  onPick,
+  onClear,
+  inputRef,
+}: {
+  file: File | null;
+  previewUrl: string | null;
+  error: string | null;
+  onPick: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onClear: () => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        className={cx(
+          'flex w-full flex-col items-center justify-center rounded-[26px] border-2 border-dashed p-7 text-center transition-colors',
+          previewUrl
+            ? 'border-[#0B7A6B]/40 bg-[#E6F4F1]'
+            : 'border-[#0B1220]/[0.12] bg-[#0B1220]/[0.025] hover:border-[#0B7A6B]/50 hover:bg-[#E6F4F1]/60',
+        )}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+          className="hidden"
+          onChange={onPick}
+        />
+
+        {previewUrl ? (
+          <img
+            src={previewUrl}
+            alt="Prescription preview"
+            className="lp-pop max-h-48 rounded-2xl object-contain shadow-[0_10px_30px_-15px_rgba(11,18,32,0.5)]"
+          />
+        ) : (
+          <>
+            <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-white text-[#0B7A6B] shadow-sm">
+              <ImageIcon size={26} strokeWidth={2} />
+            </span>
+            <span className="text-[15px] font-semibold">
+              Take or choose a prescription photo
+            </span>
+            <span className="mt-1.5 max-w-[34ch] text-[13px] leading-relaxed text-[#0B1220]/55">
+              JPG, PNG, WEBP or HEIC up to 5 MB. Keep the prescription readable.
+            </span>
+          </>
+        )}
+      </button>
+
+      {previewUrl && (
+        <div className="mt-2.5 flex items-center justify-between gap-3 rounded-2xl bg-[#0B1220]/[0.035] px-4 py-3 text-[13px]">
+          <span className="truncate text-[#0B1220]/65">{file?.name}</span>
+          <button
+            type="button"
+            onClick={onClear}
+            className="shrink-0 font-semibold text-rose-600 hover:underline"
+          >
+            Remove
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <p className="lp-wobble mt-2.5 flex items-center gap-2 rounded-2xl bg-rose-50 p-3.5 text-[13px] font-medium text-rose-700">
+          <AlertCircle size={15} strokeWidth={2.5} className="shrink-0" />
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ================================================================== */
-/*  Auth modal                                                        */
+/*  Auth + account                                                     */
 /* ================================================================== */
 
-function AuthModal({
+function AuthSheet({
+  open,
   onClose,
   onAuthenticated,
+  branchCount,
 }: {
+  open: boolean;
   onClose: () => void;
   onAuthenticated: (user: AuthUser) => void;
+  branchCount: number;
 }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '' });
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    password: '',
+  });
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  useBodyScrollLock(true);
-  useEscapeKey(true, onClose);
-  useReturnFocus(true, panelRef);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target;
-    setForm((prev) => ({ ...prev, [name]: name === 'phone' ? digitsOnly(value).slice(0, 10) : value }));
-    setErrors((prev) => (prev[name] ? { ...prev, [name]: undefined } : prev));
+
+    setForm((prev) => ({
+      ...prev,
+      [name]:
+        name === 'phone' ? digitsOnly(value).slice(0, 10) : value,
+    }));
+    setErrors((prev) =>
+      prev[name] ? { ...prev, [name]: undefined } : prev,
+    );
     setFormError(null);
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (busy) return;
+
     setBusy(true);
     setFormError(null);
+
     try {
-      const path = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const path =
+        mode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const body =
         mode === 'login'
-          ? { email: form.email.trim(), password: form.password }
-          : { name: form.name.trim(), email: form.email.trim(), phone: form.phone, password: form.password };
+          ? {
+              email: form.email.trim(),
+              password: form.password,
+            }
+          : {
+              name: form.name.trim(),
+              email: form.email.trim(),
+              phone: form.phone,
+              password: form.password,
+            };
 
-      const data = await api<{ user: AuthUser; token: string }>(path, { method: 'POST', body: JSON.stringify(body) });
-      localStorage.setItem(TOKEN_KEY, data.token);
+      const data = await api<{ user: AuthUser }>(path, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+
       onAuthenticated(data.user);
     } catch (error) {
-      if (error instanceof ApiError) {
-        setFormError(error.message);
-        if (error.details) setErrors(error.details);
-      } else {
-        setFormError('Something went wrong. Try again.');
+      setFormError(errorText(error, 'That did not work. Try again.'));
+      if (error instanceof ApiError && error.details) {
+        setErrors(error.details);
       }
     } finally {
       setBusy(false);
@@ -721,43 +1983,49 @@ function AuthModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Account">
-      <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
+    <Sheet
+      open={open}
+      onClose={onClose}
+      variant="center"
+      width="sm"
+      title={mode === 'login' ? 'Sign in' : 'Create account'}
+      description={
+        mode === 'login'
+          ? 'Your saved delivery details and order history stay with your account.'
+          : `One account works across all ${branchCount || 'available'} branch${branchCount === 1 ? '' : 'es'}.`
+      }
+    >
+      <div className="pt-1">
+        <Segmented<'login' | 'register'>
+          ariaLabel="Sign in or create account"
+          value={mode}
+          onChange={(next) => {
+            setMode(next);
+            setErrors({});
+            setFormError(null);
+          }}
+          options={[
+            { value: 'login', label: 'Sign in' },
+            { value: 'register', label: 'Create account' },
+          ]}
+        />
 
-      <div
-        ref={panelRef}
-        tabIndex={-1}
-        className="relative w-full max-w-sm overflow-hidden rounded-t-[32px] bg-white p-6 shadow-2xl outline-none sm:rounded-[32px] border border-white/20"
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="absolute right-4 top-4 rounded-full bg-gray-100 p-2 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-900"
-        >
-          <X size={18} strokeWidth={2.5} />
-        </button>
-
-        <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
-          <UserIcon size={24} strokeWidth={2} />
-        </div>
-
-        <h2 className="text-2xl font-black tracking-tight text-gray-900">
-          {mode === 'login' ? 'Welcome back' : 'Create account'}
-        </h2>
-        <p className="mt-1.5 text-sm font-medium text-gray-500">
-          {mode === 'login'
-            ? 'Sign in to quickly reuse your saved delivery details.'
-            : 'One secure account across all our branches.'}
-        </p>
-
-        <form onSubmit={submit} className="mt-6 space-y-4">
+        <form onSubmit={submit} className="mt-5 space-y-3.5" noValidate>
           {mode === 'register' && (
-            <Field name="name" label="Full name" autoComplete="name" value={form.name} error={errors.name} onChange={handleChange} maxLength={60} />
+            <Field
+              name="name"
+              label="Full name"
+              autoComplete="name"
+              value={form.name}
+              error={errors.name}
+              onChange={handleChange}
+              maxLength={60}
+            />
           )}
+
           <Field
             name="email"
-            label="Email address"
+            label="Email"
             type="email"
             inputMode="email"
             autoComplete="email"
@@ -766,6 +2034,7 @@ function AuthModal({
             onChange={handleChange}
             maxLength={120}
           />
+
           {mode === 'register' && (
             <Field
               name="phone"
@@ -779,51 +2048,293 @@ function AuthModal({
               maxLength={10}
             />
           )}
+
           <Field
             name="password"
             label="Password"
             type="password"
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            autoComplete={
+              mode === 'login' ? 'current-password' : 'new-password'
+            }
             value={form.password}
             error={errors.password}
             onChange={handleChange}
             maxLength={72}
+            hint={
+              mode === 'register' ? 'Use at least 8 characters.' : undefined
+            }
           />
 
           {formError && (
-            <p className="animate-wobble flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700 border border-rose-100">
-              <AlertCircle size={15} strokeWidth={2.5} className="shrink-0" aria-hidden="true" /> {formError}
+            <p className="lp-wobble flex items-center gap-2 rounded-2xl bg-rose-50 px-4 py-3 text-[13px] font-medium text-rose-700">
+              <AlertCircle size={15} strokeWidth={2.5} className="shrink-0" />
+              {formError}
             </p>
           )}
 
           <button
             type="submit"
             disabled={busy}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3.5 text-sm font-bold text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:opacity-60 active:scale-[0.98]"
+            className="lp-press mt-1 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0B1220] py-3.5 text-[15px] font-semibold text-white hover:bg-[#0B7A6B] disabled:opacity-60"
           >
-            {busy && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
+            {busy && <Loader2 size={17} className="animate-spin" />}
             {mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
         </form>
-
-        <button
-          type="button"
-          onClick={() => {
-            setMode(mode === 'login' ? 'register' : 'login');
-            setErrors({});
-            setFormError(null);
-          }}
-          className="mt-5 w-full rounded-xl py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-900"
-        >
-          {mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}
-        </button>
       </div>
-    </div>
+    </Sheet>
+  );
+}
+
+function AccountSheet({
+  open,
+  onClose,
+  user,
+  onUserChange,
+  onLogout,
+  onAdmin,
+  notify,
+}: {
+  open: boolean;
+  onClose: () => void;
+  user: AuthUser;
+  onUserChange: (user: AuthUser) => void;
+  onLogout: () => void;
+  onAdmin: () => void;
+  notify: (text: string, tone?: ToastTone) => void;
+}) {
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const defaultAddress = user.addresses?.[0];
+
+  const [profile, setProfile] = useState({
+    name: user.name,
+    phone: user.phone,
+    houseNo: defaultAddress?.houseNo || '',
+    area: defaultAddress?.area || '',
+    landmark: defaultAddress?.landmark || '',
+  });
+
+  useEffect(() => {
+    if (!open) return;
+
+    setLoadingOrders(true);
+    api<{ orders: OrderRecord[] }>('/api/orders/mine')
+      .then((data) => setOrders(data.orders))
+      .catch((error) =>
+        notify(errorText(error, 'Order history could not be loaded.'), 'error'),
+      )
+      .finally(() => setLoadingOrders(false));
+  }, [open, notify]);
+
+  const updateField = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = event.target;
+    setProfile((prev) => ({
+      ...prev,
+      [name]:
+        name === 'phone' ? digitsOnly(value).slice(0, 10) : value,
+    }));
+  };
+
+  const saveProfile = async () => {
+    const errors = validateAddress(
+      {
+        name: profile.name,
+        phone: profile.phone,
+        houseNo: profile.houseNo,
+        area: profile.area,
+        landmark: profile.landmark,
+      },
+      false,
+    );
+
+    if (errors.name || errors.phone) {
+      notify(errors.name || errors.phone || 'Check your profile.', 'error');
+      return;
+    }
+
+    setSavingProfile(true);
+
+    try {
+      const data = await api<{ user: AuthUser }>('/api/auth/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: profile.name.trim(),
+          phone: profile.phone,
+          ...(profile.houseNo.trim().length >= 3
+            ? {
+                defaultAddress: {
+                  houseNo: profile.houseNo.trim(),
+                  area: profile.area.trim(),
+                  landmark: profile.landmark.trim(),
+                },
+              }
+            : {}),
+        }),
+      });
+
+      onUserChange(data.user);
+      notify('Profile saved.');
+    } catch (error) {
+      notify(errorText(error, 'Profile could not be saved.'), 'error');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Your account"
+      description={user.email}
+      icon={<UserRound size={20} className="text-[#0B7A6B]" />}
+      width="lg"
+    >
+      <div className="space-y-6">
+        <section className="rounded-[26px] bg-[#0B1220]/[0.035] p-4">
+          <h3 className="mb-4 text-[15px] font-semibold">Profile & saved address</h3>
+
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <Field
+              name="name"
+              label="Full name"
+              value={profile.name}
+              onChange={updateField}
+              maxLength={60}
+            />
+            <Field
+              name="phone"
+              label="Mobile"
+              inputMode="numeric"
+              value={profile.phone}
+              onChange={updateField}
+              maxLength={10}
+            />
+            <Field
+              name="houseNo"
+              label="House / flat"
+              value={profile.houseNo}
+              onChange={updateField}
+              maxLength={120}
+            />
+            <Field
+              name="area"
+              label="Area"
+              value={profile.area}
+              onChange={updateField}
+              maxLength={120}
+            />
+            <div className="sm:col-span-2">
+              <Field
+                name="landmark"
+                label="Landmark"
+                value={profile.landmark}
+                onChange={updateField}
+                maxLength={120}
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={savingProfile}
+            onClick={saveProfile}
+            className="lp-press mt-4 flex items-center gap-2 rounded-2xl bg-[#0B7A6B] px-5 py-3 text-[13px] font-semibold text-white disabled:opacity-60"
+          >
+            {savingProfile && <Loader2 size={15} className="animate-spin" />}
+            Save details
+          </button>
+        </section>
+
+        <section>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-[15px] font-semibold">Recent orders</h3>
+            {loadingOrders && (
+              <Loader2 size={16} className="animate-spin text-[#0B7A6B]" />
+            )}
+          </div>
+
+          {orders.length === 0 && !loadingOrders ? (
+            <div className="rounded-[24px] bg-[#0B1220]/[0.035] p-8 text-center">
+              <Receipt
+                size={28}
+                className="mx-auto mb-3 text-[#0B1220]/25"
+              />
+              <p className="text-[14px] font-semibold">No orders yet</p>
+            </div>
+          ) : (
+            <ul className="space-y-2.5">
+              {orders.map((order) => (
+                <li
+                  key={order._id}
+                  className="rounded-[22px] border border-[#0B1220]/[0.06] p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[13.5px] font-semibold tabular-nums">
+                        {order.orderNumber}
+                      </p>
+                      <p className="mt-0.5 text-[12px] text-[#0B1220]/45">
+                        {formatDate(order.createdAt)}
+                      </p>
+                    </div>
+                    <OrderStatusPill status={order.status} />
+                  </div>
+
+                  {order.items?.length > 0 && (
+                    <p className="mt-3 line-clamp-2 text-[12.5px] text-[#0B1220]/60">
+                      {order.items
+                        .map((item) => `${item.displayName} × ${item.qty}`)
+                        .join(' · ')}
+                    </p>
+                  )}
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-[12px] text-[#0B1220]/45">
+                      {order.type === 'prescription'
+                        ? 'Prescription order'
+                        : `${order.items?.length || 0} line item(s)`}
+                    </span>
+                    <span className="text-[14px] font-semibold tabular-nums">
+                      {formatMoney(order.estimatedTotal)}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <div className="flex flex-wrap gap-3 border-t border-[#0B1220]/[0.07] pt-5">
+          {user.role === 'admin' && (
+            <button
+              type="button"
+              onClick={onAdmin}
+              className="lp-press flex items-center gap-2 rounded-full bg-[#0B1220] px-5 py-2.5 text-[13px] font-semibold text-white"
+            >
+              <LayoutDashboard size={15} />
+              Admin console
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onLogout}
+            className="lp-press flex items-center gap-2 rounded-full bg-rose-50 px-5 py-2.5 text-[13px] font-semibold text-rose-600"
+          >
+            <LogOut size={15} />
+            Sign out
+          </button>
+        </div>
+      </div>
+    </Sheet>
   );
 }
 
 /* ================================================================== */
-/*  Admin: medicine form                                              */
+/*  Admin forms                                                        */
 /* ================================================================== */
 
 const EMPTY_MEDICINE = {
@@ -847,12 +2358,14 @@ const EMPTY_MEDICINE = {
 function MedicineForm({
   initial,
   categories,
+  branches,
   onCancel,
   onSaved,
   onError,
 }: {
   initial: Medicine | null;
   categories: string[];
+  branches: Branch[];
   onCancel: () => void;
   onSaved: (medicine: Medicine) => void;
   onError: (message: string) => void;
@@ -878,8 +2391,23 @@ function MedicineForm({
         }
       : { ...EMPTY_MEDICINE },
   );
-  
-  const [newlyUploadedId, setNewlyUploadedId] = useState<string | null>(null);
+
+  const [inventory, setInventory] = useState(() =>
+    branches.map((branch) => {
+      const current = initial?.inventory?.find(
+        (row) => String(row.branch) === String(branch._id),
+      );
+
+      return {
+        branchId: branch._id,
+        stockUnits: String(current?.stockUnits ?? 0),
+        lowStockAt: String(current?.lowStockAt ?? 5),
+        isAvailable: current?.isAvailable ?? true,
+      };
+    }),
+  );
+
+  const [newUploads, setNewUploads] = useState<string[]>([]);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -887,21 +2415,37 @@ function MedicineForm({
 
   const setValue = (key: string, value: string | boolean) => {
     setForm((prev) => ({ ...prev, [key]: value }));
-    setErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
+    setErrors((prev) =>
+      prev[key] ? { ...prev, [key]: undefined } : prev,
+    );
   };
 
   const handleInput = (event: React.ChangeEvent<HTMLInputElement>) =>
     setValue(event.target.name, event.target.value);
 
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const deleteProductUpload = async (publicId: string) => {
+    try {
+      await api('/api/uploads/product/revert', {
+        method: 'DELETE',
+        body: JSON.stringify({ publicId }),
+      });
+    } catch {
+      // Best effort cleanup.
+    }
+  };
+
+  const handleImageUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
 
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      onError('Upload a JPG, PNG or WEBP image.');
+      onError('Images must be JPG, PNG, WEBP or HEIC.');
       return;
     }
+
     if (file.size > MAX_UPLOAD_BYTES) {
       onError('That image is over 5 MB.');
       return;
@@ -911,48 +2455,128 @@ function MedicineForm({
     body.append('image', file);
 
     setUploading(true);
+
     try {
-      const data = await api<{ url: string; publicId: string }>('/api/uploads/product', { method: 'POST', body });
-      setForm((prev) => ({ ...prev, imageUrl: data.url, imagePublicId: data.publicId }));
-      setNewlyUploadedId(data.publicId);
+      const data = await api<{ url: string; publicId: string }>(
+        '/api/uploads/product',
+        {
+          method: 'POST',
+          body,
+        },
+      );
+
+      const previousUnsaved = newUploads.find(
+        (publicId) => publicId === form.imagePublicId,
+      );
+
+      if (previousUnsaved) {
+        await deleteProductUpload(previousUnsaved);
+        setNewUploads((prev) =>
+          prev.filter((publicId) => publicId !== previousUnsaved),
+        );
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        imageUrl: data.url,
+        imagePublicId: data.publicId,
+      }));
+      setNewUploads((prev) => [...prev, data.publicId]);
     } catch (error) {
-      onError(error instanceof ApiError ? error.message : 'Upload failed.');
+      onError(errorText(error, 'The upload failed.'));
     } finally {
       setUploading(false);
     }
   };
 
-  const handleCancel = async () => {
-    if (newlyUploadedId && newlyUploadedId === form.imagePublicId) {
-      try {
-        await api('/api/uploads/revert', { method: 'DELETE', body: JSON.stringify({ publicId: newlyUploadedId }) });
-      } catch (err) {}
+  const removeCurrentImage = async () => {
+    const unsaved = newUploads.includes(form.imagePublicId);
+
+    if (unsaved && form.imagePublicId) {
+      await deleteProductUpload(form.imagePublicId);
+      setNewUploads((prev) =>
+        prev.filter((publicId) => publicId !== form.imagePublicId),
+      );
     }
+
+    setForm((prev) => ({
+      ...prev,
+      imageUrl: '',
+      imagePublicId: '',
+    }));
+  };
+
+  const handleCancel = async () => {
+    await Promise.all(newUploads.map((id) => deleteProductUpload(id)));
     onCancel();
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (busy) return;
+
+    const price = Number(form.price);
+    const mrp = Number(form.mrp);
+    const packSize = Number(form.packSize);
+    const nextErrors: FieldErrors = {};
+
+    if (!form.name.trim()) nextErrors.name = 'Give the medicine a name.';
+    if (form.use.trim().length < 3) {
+      nextErrors.use = 'Describe what it treats.';
+    }
+    if (!form.category.trim()) {
+      nextErrors.category = 'Pick or type a category.';
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      nextErrors.price = 'Enter a selling price.';
+    }
+    if (!Number.isFinite(mrp) || mrp < price) {
+      nextErrors.mrp = 'MRP cannot be below the selling price.';
+    }
+    if (
+      form.isDivisible &&
+      (!Number.isFinite(packSize) || packSize < 2)
+    ) {
+      nextErrors.packSize = 'A loose-sale pack needs at least 2 units.';
+    }
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
     setBusy(true);
+
     try {
       const payload = {
         ...form,
-        price: Number(form.price),
-        mrp: Number(form.mrp),
-        packSize: Number(form.packSize) || 1,
+        name: form.name.trim(),
+        use: form.use.trim(),
+        category: form.category.trim(),
+        price,
+        mrp,
+        packSize: form.isDivisible ? Math.round(packSize) : 1,
+        inventory: inventory.map((row) => ({
+          branchId: row.branchId,
+          stockUnits: Math.max(0, Math.round(Number(row.stockUnits) || 0)),
+          lowStockAt: Math.max(0, Math.round(Number(row.lowStockAt) || 0)),
+          isAvailable: row.isAvailable,
+        })),
       };
-      const path = initial ? `/api/medicines/${initial._id}` : '/api/medicines';
+
+      const path = initial
+        ? `/api/medicines/${initial._id}`
+        : '/api/medicines';
+
       const data = await api<{ medicine: Medicine }>(path, {
         method: initial ? 'PUT' : 'POST',
         body: JSON.stringify(payload),
       });
+
+      setNewUploads([]);
       onSaved(data.medicine);
     } catch (error) {
-      if (error instanceof ApiError) {
-        onError(error.message);
-        if (error.details) setErrors(error.details);
-      } else {
-        onError('Could not save the medicine.');
+      onError(errorText(error, 'The medicine could not be saved.'));
+      if (error instanceof ApiError && error.details) {
+        setErrors(error.details);
       }
     } finally {
       setBusy(false);
@@ -960,55 +2584,90 @@ function MedicineForm({
   };
 
   return (
-    <form onSubmit={submit} className="space-y-6 rounded-3xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
-      <h3 className="text-xl font-black tracking-tight text-gray-900">{initial ? 'Edit Medicine' : 'Add Medicine'}</h3>
+    <form
+      onSubmit={submit}
+      className="space-y-6 rounded-[28px] border border-[#0B1220]/[0.06] bg-white p-6 shadow-[0_1px_2px_rgba(11,18,32,0.06)] md:p-8"
+      noValidate
+    >
+      <h3 className="text-[20px] font-semibold tracking-[-0.02em]">
+        {initial ? 'Edit medicine' : 'Add medicine'}
+      </h3>
 
       <div className="flex flex-col gap-6 lg:flex-row">
-        <div className="shrink-0 group">
-          <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-gray-300 bg-gray-50 text-5xl transition-colors group-hover:border-indigo-400 group-hover:bg-indigo-50/50">
+        <div className="shrink-0">
+          <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-[24px] bg-[#0B1220]/[0.04] text-5xl">
             {form.imageUrl ? (
-              <img src={form.imageUrl} alt="" className="h-full w-full object-cover" />
+              <img
+                src={form.imageUrl}
+                alt=""
+                className="h-full w-full object-cover"
+              />
             ) : (
-              <span className="transition-transform group-hover:scale-110">{form.emoji || '💊'}</span>
+              <span>{form.emoji || '💊'}</span>
             )}
           </div>
+
           <input
             ref={imageInputRef}
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
             className="hidden"
             onChange={handleImageUpload}
           />
+
           <button
             type="button"
             onClick={() => imageInputRef.current?.click()}
             disabled={uploading}
-            className="mt-4 flex w-32 items-center justify-center gap-2 rounded-xl bg-gray-900 py-2.5 text-xs font-bold text-white transition-colors hover:bg-indigo-600 disabled:opacity-60 active:scale-95"
+            className="lp-press mt-3 flex w-32 items-center justify-center gap-2 rounded-2xl bg-[#0B1220] py-2.5 text-[13px] font-semibold text-white hover:bg-[#0B7A6B] disabled:opacity-60"
           >
-            {uploading ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />}
+            {uploading ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <UploadCloud size={14} />
+            )}
             {form.imageUrl ? 'Replace' : 'Upload'}
           </button>
+
           {form.imageUrl && (
             <button
               type="button"
-              onClick={() => setForm((prev) => ({ ...prev, imageUrl: '', imagePublicId: '' }))}
-              className="mt-2 w-32 text-center text-[11px] font-bold text-rose-600 hover:underline"
+              onClick={removeCurrentImage}
+              className="mt-2 w-32 text-center text-[12px] font-medium text-rose-600 hover:underline"
             >
               Remove image
             </button>
           )}
         </div>
 
-        <div className="grid flex-1 gap-5 sm:grid-cols-2">
+        <div className="grid flex-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field name="name" label="Name" value={form.name} error={errors.name} onChange={handleInput} maxLength={120} />
-          </div>
-          <div className="sm:col-span-2">
-            <Field name="use" label="What it treats" value={form.use} error={errors.use} onChange={handleInput} maxLength={200} />
+            <Field
+              name="name"
+              label="Name"
+              value={form.name}
+              error={errors.name}
+              onChange={handleInput}
+              maxLength={120}
+            />
           </div>
 
-          <div className="group/field relative">
-            <label htmlFor="field-category" className="mb-1.5 block text-xs font-bold tracking-wide text-gray-500 transition-colors group-focus-within/field:text-indigo-600">
+          <div className="sm:col-span-2">
+            <Field
+              name="use"
+              label="What it treats"
+              value={form.use}
+              error={errors.use}
+              onChange={handleInput}
+              maxLength={200}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="field-category"
+              className="mb-1.5 block text-[13px] font-medium text-[#0B1220]/55"
+            >
               Category
             </label>
             <input
@@ -1018,62 +2677,208 @@ function MedicineForm({
               value={form.category}
               onChange={handleInput}
               maxLength={60}
-              className={`w-full rounded-xl border bg-white px-4 py-3 text-sm font-medium outline-none transition-all duration-300 focus:-translate-y-[1px] focus:shadow-md focus:ring-4 ${
-                errors.category ? 'border-rose-300 focus:ring-rose-100' : 'border-gray-200 hover:border-gray-300 focus:border-indigo-600 focus:ring-indigo-600/10'
-              }`}
+              className={cx(
+                'w-full rounded-2xl border bg-[#0B1220]/[0.03] px-4 py-3 text-[15px] outline-none focus:bg-white',
+                errors.category
+                  ? 'border-rose-300'
+                  : 'border-transparent focus:border-[#0B7A6B]',
+              )}
             />
             <datalist id="category-options">
               {categories.map((category) => (
                 <option key={category} value={category} />
               ))}
             </datalist>
-            {errors.category && <p className="animate-wobble mt-1.5 text-[11px] font-bold tracking-wide text-rose-600">{errors.category}</p>}
+            {errors.category && (
+              <p className="mt-1.5 text-[12px] font-medium text-rose-600">
+                {errors.category}
+              </p>
+            )}
           </div>
 
-          <Field name="tag" label="Badge (optional)" value={form.tag} onChange={handleInput} maxLength={30} placeholder="Bestseller" />
-          <Field name="price" label="Selling price" type="number" step="0.01" inputMode="decimal" value={form.price} error={errors.price} onChange={handleInput} />
-          <Field name="mrp" label="MRP" type="number" step="0.01" inputMode="decimal" value={form.mrp} error={errors.mrp} onChange={handleInput} />
-          <Field name="packType" label="Pack type" value={form.packType} onChange={handleInput} maxLength={30} />
-          <Field name="unitType" label="Unit type" value={form.unitType} onChange={handleInput} maxLength={30} />
-          <Field name="packSize" label="Units per pack" type="number" inputMode="numeric" value={form.packSize} onChange={handleInput} />
-          <Field name="emoji" label="Fallback emoji" value={form.emoji} onChange={handleInput} maxLength={4} />
+          <Field
+            name="tag"
+            label="Badge (optional)"
+            value={form.tag}
+            onChange={handleInput}
+            maxLength={30}
+            placeholder="Bestseller"
+          />
+
+          <Field
+            name="price"
+            label="Selling price"
+            type="number"
+            step="0.01"
+            inputMode="decimal"
+            value={form.price}
+            error={errors.price}
+            onChange={handleInput}
+          />
+
+          <Field
+            name="mrp"
+            label="MRP"
+            type="number"
+            step="0.01"
+            inputMode="decimal"
+            value={form.mrp}
+            error={errors.mrp}
+            onChange={handleInput}
+          />
+
+          <Field
+            name="packType"
+            label="Pack type"
+            value={form.packType}
+            onChange={handleInput}
+            maxLength={30}
+          />
+
+          <Field
+            name="unitType"
+            label="Unit type"
+            value={form.unitType}
+            onChange={handleInput}
+            maxLength={30}
+          />
+
+          <Field
+            name="packSize"
+            label="Units per pack"
+            type="number"
+            inputMode="numeric"
+            value={form.packSize}
+            error={errors.packSize}
+            onChange={handleInput}
+          />
+
+          <Field
+            name="emoji"
+            label="Fallback emoji"
+            value={form.emoji}
+            onChange={handleInput}
+            maxLength={4}
+          />
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-5 rounded-2xl bg-gray-50 p-5 border border-gray-100">
-        {[
-          { key: 'isDivisible', label: 'Can be sold loose' },
-          { key: 'requiresPrescription', label: 'Prescription required' },
-          { key: 'isActive', label: 'Visible in store' },
-        ].map(({ key, label }) => (
-          <label key={key} className="flex cursor-pointer items-center gap-3 text-sm font-bold text-gray-700 group">
-            <div className="relative flex h-5 w-5 items-center justify-center">
-              <input
-                type="checkbox"
-                checked={Boolean(form[key as keyof typeof form])}
-                onChange={(event) => setValue(key, event.target.checked)}
-                className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border-2 border-gray-300 bg-white transition-all checked:border-indigo-600 checked:bg-indigo-600 focus:outline-none focus:ring-4 focus:ring-indigo-600/20 hover:border-gray-400"
-              />
-              <CheckCircle2 size={14} strokeWidth={3} className="pointer-events-none absolute text-white opacity-0 transition-opacity peer-checked:opacity-100" />
-            </div>
-            <span className="group-hover:text-indigo-900 transition-colors">{label}</span>
-          </label>
-        ))}
+      <div className="space-y-4 rounded-[24px] bg-[#0B1220]/[0.035] p-5">
+        <Toggle
+          label="Can be sold loose"
+          checked={form.isDivisible}
+          onChange={(next) => setValue('isDivisible', next)}
+        />
+        <Toggle
+          label="Prescription required"
+          checked={form.requiresPrescription}
+          onChange={(next) => setValue('requiresPrescription', next)}
+        />
+        <Toggle
+          label="Visible in the store"
+          checked={form.isActive}
+          onChange={(next) => setValue('isActive', next)}
+        />
       </div>
 
-      <div className="flex gap-4 pt-4 border-t border-gray-100">
+      <section>
+        <div className="mb-3">
+          <h4 className="text-[15px] font-semibold">Branch inventory</h4>
+          <p className="mt-1 text-[12.5px] text-[#0B1220]/50">
+            Stock units mean smallest saleable units. For a divisible strip of
+            10 tablets, one full strip consumes 10 stock units.
+          </p>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          {inventory.map((row, index) => {
+            const branch = branches.find(
+              (entry) => entry._id === row.branchId,
+            );
+
+            return (
+              <div
+                key={row.branchId}
+                className="rounded-[22px] border border-[#0B1220]/[0.07] p-4"
+              >
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[13.5px] font-semibold">
+                      {branch?.shortName || branch?.name || 'Branch'}
+                    </p>
+                    <p className="text-[11.5px] text-[#0B1220]/45">
+                      {branch?.address}
+                    </p>
+                  </div>
+                  <Toggle
+                    label="Available"
+                    checked={row.isAvailable}
+                    onChange={(next) =>
+                      setInventory((prev) =>
+                        prev.map((entry, entryIndex) =>
+                          entryIndex === index
+                            ? { ...entry, isAvailable: next }
+                            : entry,
+                        ),
+                      )
+                    }
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field
+                    name={`stock-${row.branchId}`}
+                    label="Stock units"
+                    type="number"
+                    inputMode="numeric"
+                    value={row.stockUnits}
+                    onChange={(event) =>
+                      setInventory((prev) =>
+                        prev.map((entry, entryIndex) =>
+                          entryIndex === index
+                            ? { ...entry, stockUnits: event.target.value }
+                            : entry,
+                        ),
+                      )
+                    }
+                  />
+                  <Field
+                    name={`low-${row.branchId}`}
+                    label="Low-stock alert at"
+                    type="number"
+                    inputMode="numeric"
+                    value={row.lowStockAt}
+                    onChange={(event) =>
+                      setInventory((prev) =>
+                        prev.map((entry, entryIndex) =>
+                          entryIndex === index
+                            ? { ...entry, lowStockAt: event.target.value }
+                            : entry,
+                        ),
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="flex flex-wrap gap-3">
         <button
           type="submit"
           disabled={busy}
-          className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:opacity-60 active:scale-95"
+          className="lp-press flex items-center gap-2 rounded-2xl bg-[#0B7A6B] px-6 py-3 text-[14px] font-semibold text-white disabled:opacity-60"
         >
           {busy && <Loader2 size={16} className="animate-spin" />}
           {initial ? 'Save changes' : 'Add medicine'}
         </button>
+
         <button
           type="button"
           onClick={handleCancel}
-          className="rounded-xl border border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50 active:scale-95"
+          className="lp-press rounded-2xl bg-[#0B1220]/[0.06] px-6 py-3 text-[14px] font-semibold text-[#0B1220]/70"
         >
           Cancel
         </button>
@@ -1081,10 +2886,6 @@ function MedicineForm({
     </form>
   );
 }
-
-/* ================================================================== */
-/*  Admin: branch form                                                */
-/* ================================================================== */
 
 function BranchForm({
   branch,
@@ -1105,62 +2906,129 @@ function BranchForm({
     fullAddress: branch?.fullAddress || '',
     lat: branch?.lat !== undefined ? String(branch.lat) : '',
     lng: branch?.lng !== undefined ? String(branch.lng) : '',
+    serviceRadiusKm:
+      branch?.serviceRadiusKm !== undefined
+        ? String(branch.serviceRadiusKm)
+        : '8',
+    open24h: branch?.open24h ?? true,
     isActive: branch?.isActive ?? true,
   });
-  
+
   const [errors, setErrors] = useState<FieldErrors>({});
   const [busy, setBusy] = useState(false);
   const [locating, setLocating] = useState(false);
 
-  const handleInput = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleInput = (
+    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
     const { name, value } = event.target;
-    setForm((prev) => ({ ...prev, [name]: name === 'phone' ? digitsOnly(value).slice(0, 15) : value }));
-    setErrors((prev) => (prev[name] ? { ...prev, [name]: undefined } : prev));
+
+    setForm((prev) => ({
+      ...prev,
+      [name]:
+        name === 'phone'
+          ? digitsOnly(value).slice(0, 15)
+          : value,
+    }));
+
+    setErrors((prev) =>
+      prev[name] ? { ...prev, [name]: undefined } : prev,
+    );
   };
 
   const handleAutoLocation = () => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      onError('Geolocation is not supported by your browser.');
+      onError('This browser cannot share a location.');
       return;
     }
+
     setLocating(true);
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setForm(prev => ({
+      (position) => {
+        setForm((prev) => ({
           ...prev,
-          lat: String(pos.coords.latitude),
-          lng: String(pos.coords.longitude)
+          lat: position.coords.latitude.toFixed(6),
+          lng: position.coords.longitude.toFixed(6),
         }));
-        setErrors(prev => ({ ...prev, lat: undefined, lng: undefined }));
+        setErrors((prev) => ({
+          ...prev,
+          lat: undefined,
+          lng: undefined,
+        }));
         setLocating(false);
       },
       (error) => {
         setLocating(false);
         onError(geolocationMessage(error));
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      },
     );
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (busy) return;
+
+    const lat = Number(form.lat);
+    const lng = Number(form.lng);
+    const serviceRadiusKm = Number(form.serviceRadiusKm);
+    const nextErrors: FieldErrors = {};
+
+    if (!form.name.trim()) nextErrors.name = 'Give the branch a name.';
+    if (digitsOnly(form.phone).length < 10) {
+      nextErrors.phone = 'Enter the WhatsApp number with country code.';
+    }
+    if (!form.address.trim()) {
+      nextErrors.address = 'Enter a short area label.';
+    }
+    if (form.fullAddress.trim().length < 10) {
+      nextErrors.fullAddress = 'Enter the full address.';
+    }
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      nextErrors.lat = 'Latitude must be between -90 and 90.';
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      nextErrors.lng = 'Longitude must be between -180 and 180.';
+    }
+    if (
+      !Number.isFinite(serviceRadiusKm) ||
+      serviceRadiusKm < 0.5 ||
+      serviceRadiusKm > 50
+    ) {
+      nextErrors.serviceRadiusKm = 'Use a radius from 0.5 to 50 km.';
+    }
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
     setBusy(true);
+
     try {
-      const payload = { ...form, lat: Number(form.lat), lng: Number(form.lng) };
-      const url = branch ? `/api/branches/${branch._id}` : '/api/branches';
-      const method = branch ? 'PUT' : 'POST';
-      
-      const data = await api<{ branch: Branch }>(url, {
-        method,
-        body: JSON.stringify(payload),
-      });
+      const payload = {
+        ...form,
+        lat,
+        lng,
+        serviceRadiusKm,
+      };
+
+      const data = await api<{ branch: Branch }>(
+        branch ? `/api/branches/${branch._id}` : '/api/branches',
+        {
+          method: branch ? 'PUT' : 'POST',
+          body: JSON.stringify(payload),
+        },
+      );
+
       onSaved(data.branch);
     } catch (error) {
-      if (error instanceof ApiError) {
-        onError(error.message);
-        if (error.details) setErrors(error.details);
-      } else {
-        onError('Could not save the branch.');
+      onError(errorText(error, 'The branch could not be saved.'));
+      if (error instanceof ApiError && error.details) {
+        setErrors(error.details);
       }
     } finally {
       setBusy(false);
@@ -1168,13 +3036,35 @@ function BranchForm({
   };
 
   return (
-    <form onSubmit={submit} className="w-full space-y-6 rounded-[24px] border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
-      <h3 className="text-xl font-black tracking-tight text-gray-900 mb-2">
-        {branch ? 'Edit Branch' : 'Add New Branch'}
+    <form
+      onSubmit={submit}
+      className="space-y-6 rounded-[28px] border border-[#0B1220]/[0.06] bg-white p-6 shadow-[0_1px_2px_rgba(11,18,32,0.06)] md:p-8"
+      noValidate
+    >
+      <h3 className="text-[20px] font-semibold tracking-[-0.02em]">
+        {branch ? 'Edit branch' : 'Add branch'}
       </h3>
-      <div className="grid gap-5 sm:grid-cols-2">
-        <Field name="name" label="Branch name" value={form.name} error={errors.name} onChange={handleInput} maxLength={80} placeholder="Lotus Pharmacy - Malad East" />
-        <Field name="shortName" label="Short name" value={form.shortName} onChange={handleInput} maxLength={30} placeholder="Malad East" />
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          name="name"
+          label="Branch name"
+          value={form.name}
+          error={errors.name}
+          onChange={handleInput}
+          maxLength={80}
+          placeholder="Lotus Pharmacy, Malad East"
+        />
+
+        <Field
+          name="shortName"
+          label="Short name"
+          value={form.shortName}
+          onChange={handleInput}
+          maxLength={30}
+          placeholder="Malad East"
+        />
+
         <Field
           name="phone"
           label="WhatsApp number with country code"
@@ -1183,11 +3073,23 @@ function BranchForm({
           error={errors.phone}
           onChange={handleInput}
           maxLength={15}
-          placeholder="919098768768"
+          placeholder="919876543210"
         />
-        <Field name="address" label="Area label" value={form.address} error={errors.address} onChange={handleInput} maxLength={120} placeholder="Malad East, Near Station" />
-        <div className="sm:col-span-2 group/field relative">
-          <label htmlFor="field-fullAddress" className="mb-1.5 block text-xs font-bold tracking-wide text-gray-500 transition-colors group-focus-within/field:text-indigo-600">
+
+        <Field
+          name="address"
+          label="Area label"
+          value={form.address}
+          error={errors.address}
+          onChange={handleInput}
+          maxLength={120}
+        />
+
+        <div className="sm:col-span-2">
+          <label
+            htmlFor="field-fullAddress"
+            className="mb-1.5 block text-[13px] font-medium text-[#0B1220]/55"
+          >
             Full address
           </label>
           <textarea
@@ -1197,61 +3099,108 @@ function BranchForm({
             value={form.fullAddress}
             onChange={handleInput}
             maxLength={300}
-            placeholder="Shop No 4, Ground Floor..."
-            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium outline-none transition-all duration-300 focus:-translate-y-[1px] focus:shadow-md focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10 hover:border-gray-300"
+            className={cx(
+              'w-full rounded-2xl border bg-[#0B1220]/[0.03] px-4 py-3 text-[15px] outline-none focus:bg-white',
+              errors.fullAddress
+                ? 'border-rose-300'
+                : 'border-transparent focus:border-[#0B7A6B]',
+            )}
           />
-          {errors.fullAddress && <p className="animate-wobble mt-1.5 text-[11px] font-bold tracking-wide text-rose-600">{errors.fullAddress}</p>}
+          {errors.fullAddress && (
+            <p className="mt-1.5 text-[12px] font-medium text-rose-600">
+              {errors.fullAddress}
+            </p>
+          )}
         </div>
-        
-        <div className="sm:col-span-2 flex flex-col gap-3 p-5 bg-indigo-50/50 rounded-2xl border border-indigo-100">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-bold text-gray-900 flex items-center gap-2">
-              <Map size={16} strokeWidth={2.5} className="text-indigo-600" /> Location Coordinates
+
+        <div className="rounded-[24px] bg-[#E6F4F1] p-5 sm:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="flex items-center gap-2 text-[14px] font-semibold">
+              <MapIcon size={16} className="text-[#0B7A6B]" />
+              Delivery geography
             </span>
+
             <button
               type="button"
               onClick={handleAutoLocation}
               disabled={locating}
-              className="flex items-center gap-2 rounded-lg bg-white border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              className="lp-press flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[13px] font-semibold text-[#0B7A6B] disabled:opacity-60"
             >
-              {locating ? <Loader2 size={14} className="animate-spin" /> : <Navigation size={14} />}
-              Auto-detect
+              {locating ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Navigation size={14} />
+              )}
+              Use this device
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-5 mt-2">
-            <Field name="lat" label="Latitude" type="number" step="any" inputMode="decimal" value={form.lat} error={errors.lat} onChange={handleInput} />
-            <Field name="lng" label="Longitude" type="number" step="any" inputMode="decimal" value={form.lng} error={errors.lng} onChange={handleInput} />
+
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <Field
+              name="lat"
+              label="Latitude"
+              type="number"
+              step="any"
+              inputMode="decimal"
+              value={form.lat}
+              error={errors.lat}
+              onChange={handleInput}
+            />
+            <Field
+              name="lng"
+              label="Longitude"
+              type="number"
+              step="any"
+              inputMode="decimal"
+              value={form.lng}
+              error={errors.lng}
+              onChange={handleInput}
+            />
+            <Field
+              name="serviceRadiusKm"
+              label="Service radius (km)"
+              type="number"
+              step="0.1"
+              inputMode="decimal"
+              value={form.serviceRadiusKm}
+              error={errors.serviceRadiusKm}
+              onChange={handleInput}
+            />
           </div>
         </div>
       </div>
 
-      <div className="rounded-2xl bg-gray-50 p-5 border border-gray-100 mt-2">
-        <label className="flex cursor-pointer items-center gap-3 text-sm font-bold text-gray-700 group w-fit">
-          <div className="relative flex h-5 w-5 items-center justify-center">
-            <input
-              type="checkbox"
-              checked={form.isActive}
-              onChange={(event) => setForm((prev) => ({ ...prev, isActive: event.target.checked }))}
-              className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border-2 border-gray-300 bg-white transition-all checked:border-indigo-600 checked:bg-indigo-600 focus:outline-none focus:ring-4 focus:ring-indigo-600/20"
-            />
-            <CheckCircle2 size={14} strokeWidth={3} className="pointer-events-none absolute text-white opacity-0 transition-opacity peer-checked:opacity-100" />
-          </div>
-          <span className="group-hover:text-indigo-900 transition-colors">Accepting orders for this branch</span>
-        </label>
+      <div className="space-y-4 rounded-[24px] bg-[#0B1220]/[0.035] p-5">
+        <Toggle
+          label="Open 24 hours"
+          checked={form.open24h}
+          onChange={(next) =>
+            setForm((prev) => ({ ...prev, open24h: next }))
+          }
+        />
+        <Toggle
+          label="Accepting orders"
+          checked={form.isActive}
+          onChange={(next) =>
+            setForm((prev) => ({ ...prev, isActive: next }))
+          }
+        />
       </div>
 
-      <div className="flex gap-4 pt-4 border-t border-gray-100">
+      <div className="flex flex-wrap gap-3">
         <button
           type="submit"
           disabled={busy}
-          className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:opacity-60 active:scale-95"
+          className="lp-press flex items-center gap-2 rounded-2xl bg-[#0B7A6B] px-6 py-3 text-[14px] font-semibold text-white disabled:opacity-60"
         >
-          {busy && <Loader2 size={16} className="animate-spin" />} Save Branch
+          {busy && <Loader2 size={16} className="animate-spin" />}
+          Save branch
         </button>
+
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-xl border border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50 active:scale-95"
+          className="lp-press rounded-2xl bg-[#0B1220]/[0.06] px-6 py-3 text-[14px] font-semibold text-[#0B1220]/70"
         >
           Cancel
         </button>
@@ -1261,8 +3210,262 @@ function BranchForm({
 }
 
 /* ================================================================== */
-/*  Admin panel                                                       */
+/*  Admin                                                              */
 /* ================================================================== */
+
+const StatCard = memo(function StatCard({
+  label,
+  value,
+  icon,
+  iconClass,
+  delta,
+  series,
+  seriesTone,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+  iconClass: string;
+  delta?: number;
+  series?: number[];
+  seriesTone?: string;
+}) {
+  const hasDelta = typeof delta === 'number';
+  const positive = (delta ?? 0) >= 0;
+
+  return (
+    <div className="flex flex-col justify-between rounded-3xl border border-[#0B1220]/[0.06] bg-white p-5 shadow-[0_1px_2px_rgba(11,18,32,0.05)]">
+      <div className="mb-3 flex items-center gap-3">
+        <span
+          className={cx(
+            'flex h-10 w-10 items-center justify-center rounded-xl',
+            iconClass,
+          )}
+        >
+          {icon}
+        </span>
+        <span className="text-[13.5px] font-medium text-[#0B1220]/55">
+          {label}
+        </span>
+      </div>
+
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <p className="text-[28px] font-semibold leading-none tracking-[-0.02em] tabular-nums">
+            {value}
+          </p>
+
+          {hasDelta && (
+            <p className="mt-2 text-[12px] text-[#0B1220]/45">
+              <span
+                className={cx(
+                  'font-semibold',
+                  positive ? 'text-emerald-600' : 'text-rose-500',
+                )}
+              >
+                {positive ? '↑' : '↓'} {Math.abs(delta as number)}%
+              </span>{' '}
+              vs yesterday
+            </p>
+          )}
+        </div>
+
+        {series && series.length > 1 && (
+          <Sparkline values={series} tone={seriesTone} />
+        )}
+      </div>
+    </div>
+  );
+});
+
+function OrderDetailSheet({
+  order,
+  onClose,
+  onStatusChange,
+  onMessageCustomer,
+  notify,
+}: {
+  order: OrderRecord | null;
+  onClose: () => void;
+  onStatusChange: (order: OrderRecord, status: OrderStatus) => void;
+  onMessageCustomer: (order: OrderRecord) => void;
+  notify: (text: string, tone?: ToastTone) => void;
+}) {
+  const [openingPrescription, setOpeningPrescription] = useState(false);
+
+  if (!order) return null;
+
+  const nextStatuses = ORDER_TRANSITIONS[order.status];
+
+  const openPrescription = async () => {
+    setOpeningPrescription(true);
+
+    try {
+      const data = await api<{ url: string }>(
+        `/api/orders/${order._id}/prescription`,
+      );
+      const opened = window.open(data.url, '_blank', 'noopener,noreferrer');
+      if (!opened) window.location.href = data.url;
+    } catch (error) {
+      notify(errorText(error, 'Prescription could not be opened.'), 'error');
+    } finally {
+      setOpeningPrescription(false);
+    }
+  };
+
+  return (
+    <Sheet
+      open={Boolean(order)}
+      onClose={onClose}
+      title={order.orderNumber}
+      description={formatDate(order.createdAt)}
+      icon={<Receipt size={20} className="text-[#0B7A6B]" />}
+      width="lg"
+    >
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <OrderStatusPill status={order.status} />
+          <span className="rounded-full bg-[#0B1220]/[0.05] px-3 py-1 text-[12px] font-medium text-[#0B1220]/55">
+            {order.branch?.shortName || order.branch?.name || 'Branch'}
+          </span>
+        </div>
+
+        <section className="rounded-[24px] bg-[#0B1220]/[0.035] p-4">
+          <h3 className="text-[14px] font-semibold">{order.customer.name}</h3>
+          <a
+            href={`tel:+91${digitsOnly(order.customer.phone)}`}
+            className="mt-1 inline-block text-[13px] font-semibold text-[#0B7A6B]"
+          >
+            +91 {order.customer.phone}
+          </a>
+          <p className="mt-2 text-[13px] leading-relaxed text-[#0B1220]/65">
+            {order.customer.houseNo}
+            {order.customer.area ? `, ${order.customer.area}` : ''}
+            {order.customer.landmark
+              ? `, near ${order.customer.landmark}`
+              : ''}
+          </p>
+        </section>
+
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-[15px] font-semibold">
+              {order.type === 'prescription'
+                ? 'Prescription request'
+                : 'Order items'}
+            </h3>
+            <span className="text-[16px] font-semibold tabular-nums">
+              {formatMoney(order.estimatedTotal)}
+            </span>
+          </div>
+
+          {order.items?.length ? (
+            <ul className="space-y-2">
+              {order.items.map((item, index) => (
+                <li
+                  key={`${item.name}-${index}`}
+                  className="rounded-[20px] border border-[#0B1220]/[0.06] p-3.5"
+                >
+                  <div className="flex justify-between gap-3">
+                    <div>
+                      <p className="text-[13.5px] font-semibold">
+                        {item.displayName}
+                      </p>
+                      <p className="mt-1 text-[12px] text-[#0B1220]/50">
+                        {item.qty} × {formatMoney(item.unitPrice)}
+                        {item.requiresPrescription ? ' · Rx' : ''}
+                      </p>
+                    </div>
+                    <span className="text-[13.5px] font-semibold tabular-nums">
+                      {formatMoney(item.lineTotal)}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="rounded-[20px] bg-[#0B1220]/[0.035] p-4 text-[13px] text-[#0B1220]/55">
+              The pharmacist will price this order after reviewing the
+              prescription.
+            </p>
+          )}
+        </section>
+
+        {order.hasPrescription && (
+          <button
+            type="button"
+            onClick={openPrescription}
+            disabled={openingPrescription}
+            className="lp-press flex w-full items-center justify-center gap-2 rounded-2xl bg-[#E6F4F1] py-3.5 text-[13.5px] font-semibold text-[#0B7A6B] disabled:opacity-60"
+          >
+            {openingPrescription ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <FileText size={16} />
+            )}
+            Open private prescription
+          </button>
+        )}
+
+        {order.statusHistory?.length ? (
+          <section>
+            <h3 className="mb-3 text-[15px] font-semibold">Timeline</h3>
+            <ol className="space-y-2.5">
+              {order.statusHistory.map((entry, index) => (
+                <li
+                  key={`${entry.status}-${entry.at}-${index}`}
+                  className="flex items-start gap-3"
+                >
+                  <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#0B7A6B]" />
+                  <div>
+                    <p className="text-[13px] font-semibold">
+                      {ORDER_STATUS_LABEL[entry.status]}
+                    </p>
+                    <p className="text-[11.5px] text-[#0B1220]/45">
+                      {formatDate(entry.at)}
+                      {entry.note ? ` · ${entry.note}` : ''}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => onMessageCustomer(order)}
+            className="lp-press flex items-center justify-center gap-2 rounded-2xl bg-[#25D366] py-3.5 text-[13.5px] font-semibold text-white"
+          >
+            <MessageCircle size={16} />
+            WhatsApp customer
+          </button>
+
+          {nextStatuses.length > 0 && (
+            <SelectShell
+              id={`detail-status-${order._id}`}
+              label="Move order to"
+              value={order.status}
+              onChange={(value) =>
+                onStatusChange(order, value as OrderStatus)
+              }
+            >
+              <option value={order.status}>
+                {ORDER_STATUS_LABEL[order.status]}
+              </option>
+              {nextStatuses.map((status) => (
+                <option key={status} value={status}>
+                  Move to {ORDER_STATUS_LABEL[status]}
+                </option>
+              ))}
+            </SelectShell>
+          )}
+        </div>
+      </div>
+    </Sheet>
+  );
+}
 
 function AdminPanel({
   user,
@@ -1277,66 +3480,145 @@ function AdminPanel({
   onBranchesChange: (branches: Branch[]) => void;
   onBackToStore: () => void;
   onLogout: () => void;
-  notify: (text: string, tone?: 'success' | 'error') => void;
+  notify: (text: string, tone?: ToastTone) => void;
 }) {
-  const [tab, setTab] = useState<'orders' | 'catalogue' | 'branches'>('orders');
-  const [stats, setStats] = useState<{ ordersToday: number; pending: number; revenueToday: number; medicineCount: number } | null>(null);
+  const [tab, setTab] = useState<AdminTab>('orders');
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [ordersPages, setOrdersPages] = useState(1);
+  const [ordersTotal, setOrdersTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'all'>('all');
+  const [rangeFilter, setRangeFilter] = useState<OrderRange>('today');
+  const [orderSearch, setOrderSearch] = useState('');
+  const debouncedOrderSearch = useDebouncedValue(
+    orderSearch.trim(),
+    SEARCH_DEBOUNCE_MS,
+  );
 
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [medicinesLoading, setMedicinesLoading] = useState(false);
-  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
-  const [showMedicineForm, setShowMedicineForm] = useState(false);
-  
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [hasMoreMedicines, setHasMoreMedicines] = useState(false);
+  const [medicineSearch, setMedicineSearch] = useState('');
+  const debouncedMedicineSearch = useDebouncedValue(
+    medicineSearch.trim(),
+    SEARCH_DEBOUNCE_MS,
+  );
+  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(
+    null,
+  );
+  const [showMedicineForm, setShowMedicineForm] = useState(false);
+  const medicinePage = useRef(1);
 
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const [showBranchForm, setShowBranchForm] = useState(false);
 
+  useOutsideClick(menuOpen, menuRef, () => setMenuOpen(false));
+  useEscapeKey(menuOpen, () => setMenuOpen(false));
+
   const categories = useMemo(
-    () => Array.from(new Set(medicines.map((medicine) => medicine.category))).sort(),
+    () =>
+      Array.from(
+        new Set(
+          medicines
+            .map((medicine) => medicine.category)
+            .filter(Boolean),
+        ),
+      ).sort(),
     [medicines],
   );
 
   const loadStats = useCallback(async () => {
     try {
-      setStats(await api('/api/admin/stats'));
-    } catch {}
+      setStats(await api<AdminStats>('/api/admin/stats'));
+    } catch {
+      // Console remains usable if summary fails.
+    }
   }, []);
 
   const loadOrders = useCallback(async () => {
     setOrdersLoading(true);
+
     try {
-      const query = statusFilter === 'all' ? '' : `?status=${statusFilter}`;
-      const data = await api<{ orders: OrderRecord[] }>(`/api/orders${query}`);
+      const params = new URLSearchParams({
+        page: String(ordersPage),
+        limit: String(ADMIN_ORDERS_PAGE_SIZE),
+        range: rangeFilter,
+      });
+
+      if (statusFilter !== 'all') {
+        params.set('status', statusFilter);
+      }
+
+      if (debouncedOrderSearch) {
+        params.set('search', debouncedOrderSearch);
+      }
+
+      const data = await api<{
+        orders: OrderRecord[];
+        total: number;
+        pages: number;
+      }>(`/api/orders?${params.toString()}`);
+
       setOrders(data.orders);
+      setOrdersTotal(data.total);
+      setOrdersPages(data.pages);
     } catch (error) {
-      notify(error instanceof ApiError ? error.message : 'Could not load orders.', 'error');
+      notify(errorText(error, 'Orders could not be loaded.'), 'error');
     } finally {
       setOrdersLoading(false);
     }
-  }, [notify, statusFilter]);
+  }, [
+    debouncedOrderSearch,
+    notify,
+    ordersPage,
+    rangeFilter,
+    statusFilter,
+  ]);
 
-  const loadMedicines = useCallback(async (reset = false) => {
-    setMedicinesLoading(true);
-    try {
-      const fetchPage = reset ? 1 : page;
-      const data = await api<{ items: Medicine[], pages: number }>(`/api/medicines?all=true&limit=60&page=${fetchPage}`);
-      setMedicines(prev => reset ? data.items : [...prev, ...data.items]);
-      setTotalPages(data.pages);
-      setPage(fetchPage + 1);
-      setHasMoreMedicines(fetchPage < data.pages);
-    } catch (error) {
-      notify(error instanceof ApiError ? error.message : 'Could not load the catalogue.', 'error');
-    } finally {
-      setMedicinesLoading(false);
-    }
-  }, [notify, page]);
+  const loadMedicines = useCallback(
+    async (mode: 'reset' | 'more') => {
+      setMedicinesLoading(true);
+      const page =
+        mode === 'reset' ? 1 : medicinePage.current + 1;
+
+      try {
+        const params = new URLSearchParams({
+          all: 'true',
+          page: String(page),
+          limit: String(ADMIN_CATALOGUE_PAGE_SIZE),
+        });
+
+        if (debouncedMedicineSearch) {
+          params.set('search', debouncedMedicineSearch);
+        }
+
+        const data = await api<{
+          items: Medicine[];
+          pages: number;
+        }>(`/api/medicines?${params.toString()}`);
+
+        medicinePage.current = page;
+        setMedicines((prev) =>
+          mode === 'reset' ? data.items : [...prev, ...data.items],
+        );
+        setHasMoreMedicines(page < (data.pages || 1));
+      } catch (error) {
+        notify(
+          errorText(error, 'The catalogue could not be loaded.'),
+          'error',
+        );
+      } finally {
+        setMedicinesLoading(false);
+      }
+    },
+    [debouncedMedicineSearch, notify],
+  );
 
   useEffect(() => {
     loadStats();
@@ -1344,279 +3626,647 @@ function AdminPanel({
 
   useEffect(() => {
     if (tab === 'orders') loadOrders();
-    if (tab === 'catalogue' && medicines.length === 0) loadMedicines(true);
-  }, [tab, loadOrders, loadMedicines, medicines.length]);
+  }, [tab, loadOrders]);
 
-  const changeOrderStatus = async (orderId: string, status: OrderStatus) => {
+  useEffect(() => {
+    if (tab === 'catalogue') loadMedicines('reset');
+  }, [tab, loadMedicines]);
+
+  useEffect(() => {
+    setOrdersPage(1);
+  }, [statusFilter, rangeFilter, debouncedOrderSearch]);
+
+  const changeOrderStatus = async (
+    order: OrderRecord,
+    status: OrderStatus,
+  ) => {
+    if (status === order.status) return;
+
+    const previous = orders;
+
+    setOrders((prev) =>
+      prev.map((entry) =>
+        entry._id === order._id
+          ? { ...entry, status }
+          : entry,
+      ),
+    );
+
+    if (selectedOrder?._id === order._id) {
+      setSelectedOrder((prev) =>
+        prev ? { ...prev, status } : prev,
+      );
+    }
+
     try {
-      const data = await api<{ order: OrderRecord }>(`/api/orders/${orderId}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status }),
-      });
-      setOrders((prev) => prev.map((order) => (order._id === orderId ? { ...order, status: data.order.status } : order)));
+      const data = await api<{ order: OrderRecord }>(
+        `/api/orders/${order._id}/status`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ status }),
+        },
+      );
+
+      setOrders((prev) =>
+        prev.map((entry) =>
+          entry._id === order._id ? data.order : entry,
+        ),
+      );
+
+      if (selectedOrder?._id === order._id) {
+        setSelectedOrder(data.order);
+      }
+
       loadStats();
     } catch (error) {
-      notify(error instanceof ApiError ? error.message : 'Could not update the order.', 'error');
+      setOrders(previous);
+      setSelectedOrder((prev) =>
+        prev?._id === order._id ? order : prev,
+      );
+      notify(
+        errorText(error, 'The order could not be updated.'),
+        'error',
+      );
     }
   };
 
-  const hideMedicine = async (medicine: Medicine) => {
-    if (!window.confirm(`Hide "${medicine.name}" from the store?`)) return;
+  const setMedicineVisibility = async (
+    medicine: Medicine,
+    isActive: boolean,
+  ) => {
+    const previous = medicines;
+
+    setMedicines((prev) =>
+      prev.map((item) =>
+        item._id === medicine._id
+          ? { ...item, isActive }
+          : item,
+      ),
+    );
+
     try {
-      await api(`/api/medicines/${medicine._id}`, { method: 'DELETE' });
-      setMedicines((prev) => prev.map((item) => (item._id === medicine._id ? { ...item, isActive: false } : item)));
-      notify('Medicine hidden from the store.');
+      await api(`/api/medicines/${medicine._id}/visibility`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive }),
+      });
+
+      notify(
+        isActive
+          ? `${medicine.name} is back in the store.`
+          : `${medicine.name} is hidden.`,
+      );
+      loadStats();
     } catch (error) {
-      notify(error instanceof ApiError ? error.message : 'Could not hide the medicine.', 'error');
+      setMedicines(previous);
+      notify(
+        errorText(error, 'The medicine could not be updated.'),
+        'error',
+      );
     }
   };
 
-  const tabs = [
-    { key: 'orders', label: 'Orders', icon: Receipt },
-    { key: 'catalogue', label: 'Catalogue', icon: Package },
-    { key: 'branches', label: 'Branches', icon: Store },
-  ] as const;
+  // Staff-initiated chat. Automated order and status messages are sent by the
+  // server; this opens a real conversation window for anything ad hoc.
+  const openWhatsApp = useCallback((phone: string, message: string) => {
+    const url = `https://wa.me/${digitsOnly(phone)}?text=${encodeURIComponent(
+      message,
+    )}`;
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) window.location.href = url;
+  }, []);
+
+  const messageCustomer = useCallback(
+    (order: OrderRecord) => {
+      const message = [
+        `Hello ${sanitizeForMessage(order.customer.name, 40)}, this is ${
+          order.branch?.shortName ||
+          order.branch?.name ||
+          'Lotus Pharmacy'
+        }.`,
+        `We are contacting you about order ${order.orderNumber}.`,
+        order.estimatedTotal > 0
+          ? `Current estimated value: ${formatMoney(order.estimatedTotal)}.`
+          : 'We are reviewing your prescription and will confirm the bill.',
+      ].join('\n');
+
+      openWhatsApp(`91${digitsOnly(order.customer.phone)}`, message);
+    },
+    [openWhatsApp],
+  );
+
+  const tabs: Array<{
+    value: AdminTab;
+    label: string;
+    icon: React.ReactNode;
+  }> = [
+    {
+      value: 'orders',
+      label: 'Orders',
+      icon: <Package size={16} strokeWidth={2.3} />,
+    },
+    {
+      value: 'catalogue',
+      label: 'Catalogue',
+      icon: <LayoutList size={16} strokeWidth={2.3} />,
+    },
+    {
+      value: 'branches',
+      label: 'Branches',
+      icon: <Store size={16} strokeWidth={2.3} />,
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] font-sans text-gray-900 antialiased selection:bg-indigo-200 selection:text-indigo-900">
-      <header className="sticky top-0 z-30 border-b border-gray-200/80 bg-white/80 backdrop-blur-xl shadow-sm">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3.5 sm:px-6">
-          <button
-            type="button"
-            onClick={onBackToStore}
-            className="flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 active:scale-95"
-          >
-            <ChevronLeft size={18} strokeWidth={2.5} /> Store
-          </button>
+    <div className="min-h-screen bg-[#F4F7F9] text-[#0B1220] antialiased">
+      <header className="sticky top-0 z-30 border-b border-[#0B1220]/[0.07] bg-white/85 px-4 py-3 backdrop-blur-xl sm:px-6">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#0B7A6B] text-white">
+              <LotusMark size={22} />
+            </span>
 
-          <div className="flex items-center gap-2 text-indigo-700 pl-2 border-l border-gray-200 ml-2">
-            <LayoutDashboard size={20} aria-hidden="true" />
-            <h1 className="text-lg font-black tracking-tight">Admin Console</h1>
+            <div className="min-w-0">
+              <h1 className="truncate text-[16px] font-semibold tracking-[-0.02em]">
+                Lotus Pharmacy console
+              </h1>
+              <p className="truncate text-[12px] text-[#0B1220]/50">
+                {branches.length} branch{branches.length === 1 ? '' : 'es'} ·{' '}
+                {stats?.openOrders ?? 0} open order
+                {(stats?.openOrders ?? 0) === 1 ? '' : 's'}
+              </p>
+            </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-3">
-            <span className="hidden text-sm font-bold text-gray-600 sm:inline bg-gray-100 px-3 py-1.5 rounded-full border border-gray-200/60">{user.name}</span>
+          <nav className="hidden items-center gap-1 rounded-full bg-[#0B1220]/[0.05] p-1 md:flex">
+            {tabs.map((entry) => (
+              <button
+                key={entry.value}
+                type="button"
+                onClick={() => setTab(entry.value)}
+                className={cx(
+                  'flex items-center gap-2 rounded-full px-5 py-2 text-[13.5px] font-medium',
+                  tab === entry.value
+                    ? 'bg-[#0B7A6B] text-white shadow-sm'
+                    : 'text-[#0B1220]/55 hover:bg-white hover:text-[#0B1220]',
+                )}
+              >
+                {entry.icon}
+                {entry.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="relative" ref={menuRef}>
             <button
               type="button"
-              onClick={onLogout}
-              className="flex items-center gap-2 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-bold text-white transition-all hover:bg-gray-800 active:scale-95"
+              onClick={() => setMenuOpen((open) => !open)}
+              className="lp-press flex items-center gap-2.5 rounded-full border border-[#0B1220]/10 bg-white py-1.5 pl-1.5 pr-3"
             >
-              <LogOut size={16} /> <span className="hidden sm:inline">Sign out</span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E6F4F1] text-[12px] font-semibold text-[#0B7A6B]">
+                {initialsOf(user.name)}
+              </span>
+              <span className="hidden text-left sm:block">
+                <span className="block text-[13px] font-semibold">
+                  {user.name}
+                </span>
+                <span className="block text-[11.5px] text-[#0B1220]/50">
+                  Admin
+                </span>
+              </span>
+              <ChevronDown size={15} className="text-[#0B1220]/40" />
             </button>
+
+            {menuOpen && (
+              <div className="lp-pop absolute right-0 top-[calc(100%+0.6rem)] w-52 overflow-hidden rounded-2xl border border-[#0B1220]/[0.08] bg-white p-1.5 shadow-[0_24px_60px_-24px_rgba(11,18,32,0.45)]">
+                <button
+                  type="button"
+                  onClick={onBackToStore}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13.5px] font-medium hover:bg-[#0B1220]/[0.05]"
+                >
+                  <ChevronLeft size={16} />
+                  Back to store
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13.5px] font-medium text-rose-600 hover:bg-rose-50"
+                >
+                  <LogOut size={16} />
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="mx-auto flex max-w-6xl gap-2 overflow-x-auto px-4 pb-3 pt-1 sm:px-6 no-scrollbar">
-          {tabs.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={`flex items-center gap-2 whitespace-nowrap rounded-lg border px-4 py-2 text-sm font-bold transition-all duration-300 ease-out active:scale-95 ${
-                tab === key ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'border-transparent bg-transparent text-gray-500 hover:bg-gray-100'
-              }`}
-            >
-              <Icon size={16} /> {label}
-            </button>
-          ))}
+        <div className="mx-auto mt-3 max-w-[1600px] md:hidden">
+          <Segmented<AdminTab>
+            ariaLabel="Console sections"
+            value={tab}
+            onChange={setTab}
+            options={tabs.map((entry) => ({
+              value: entry.value,
+              label: entry.label,
+            }))}
+          />
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        {stats && (
-          <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {[
-              { label: 'Orders today', value: String(stats.ordersToday), icon: Receipt, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
-              { label: 'Awaiting action', value: String(stats.pending), icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-100' },
-              { label: 'Delivered today', value: formatMoney(stats.revenueToday), icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
-              { label: 'Live medicines', value: String(stats.medicineCount), icon: Package, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-100' },
-            ].map(({ label, value, icon: Icon, color, bg, border }) => (
-              <div key={label} className="group flex flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
-                <span className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl ${bg} ${color} border ${border} transition-transform group-hover:scale-110`}>
-                  <Icon size={18} strokeWidth={2.5} aria-hidden="true" />
-                </span>
-                <p className="text-2xl font-black text-gray-900 tabular-nums tracking-tight">{value}</p>
-                <p className="mt-1 text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</p>
+      <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="Orders today"
+            value={String(stats?.ordersToday ?? 0)}
+            delta={stats?.ordersDelta}
+            series={stats?.ordersSeries}
+            icon={<ShoppingCart size={19} />}
+            iconClass="bg-[#E6F4F1] text-[#0B7A6B]"
+          />
+
+          <StatCard
+            label="Awaiting confirmation"
+            value={String(stats?.waitingWhatsApp ?? 0)}
+            icon={<Clock size={19} />}
+            iconClass="bg-amber-50 text-amber-600"
+          />
+
+          <StatCard
+            label="Confirmed value today"
+            value={formatMoney(stats?.bookedToday ?? 0)}
+            delta={stats?.bookedDelta}
+            series={stats?.revenueSeries}
+            seriesTone="#0B1220"
+            icon={<IndianRupee size={19} />}
+            iconClass="bg-emerald-50 text-emerald-600"
+          />
+
+          <StatCard
+            label="Medicines live"
+            value={compactNumber.format(stats?.medicineCount ?? 0)}
+            icon={<Package size={19} />}
+            iconClass="bg-sky-50 text-sky-600"
+          />
+        </div>
+
+        {tab === 'orders' && (
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <section className="overflow-hidden rounded-3xl border border-[#0B1220]/[0.06] bg-white shadow-[0_1px_2px_rgba(11,18,32,0.05)]">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#0B1220]/[0.07] p-5">
+                <div>
+                  <h2 className="text-[19px] font-semibold">Orders</h2>
+                  <p className="mt-0.5 text-[13px] text-[#0B1220]/55">
+                    Click any order to see medicines, prescription and timeline.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="w-full sm:w-[240px]">
+                    <SearchInput
+                      id="admin-order-search"
+                      label="Search orders"
+                      placeholder="Order number, name or phone"
+                      value={orderSearch}
+                      onChange={setOrderSearch}
+                      busy={
+                        orderSearch.trim() !== debouncedOrderSearch
+                      }
+                    />
+                  </div>
+
+                  <SelectShell
+                    id="order-status-filter"
+                    label="Filter by status"
+                    value={statusFilter}
+                    onChange={(value) =>
+                      setStatusFilter(value as OrderStatus | 'all')
+                    }
+                  >
+                    <option value="all">All statuses</option>
+                    {(Object.keys(ORDER_STATUS_LABEL) as OrderStatus[]).map(
+                      (status) => (
+                        <option key={status} value={status}>
+                          {ORDER_STATUS_LABEL[status]}
+                        </option>
+                      ),
+                    )}
+                  </SelectShell>
+
+                  <SelectShell
+                    id="order-range-filter"
+                    label="Filter by date"
+                    value={rangeFilter}
+                    onChange={(value) =>
+                      setRangeFilter(value as OrderRange)
+                    }
+                  >
+                    {(Object.keys(ORDER_RANGE_LABEL) as OrderRange[]).map(
+                      (range) => (
+                        <option key={range} value={range}>
+                          {ORDER_RANGE_LABEL[range]}
+                        </option>
+                      ),
+                    )}
+                  </SelectShell>
+
+                  <button
+                    type="button"
+                    onClick={loadOrders}
+                    className="lp-press flex h-10 w-10 items-center justify-center rounded-full border border-[#0B1220]/10"
+                    aria-label="Refresh orders"
+                  >
+                    <RefreshCw
+                      size={16}
+                      className={
+                        ordersLoading
+                          ? 'animate-spin text-[#0B7A6B]'
+                          : ''
+                      }
+                    />
+                  </button>
+                </div>
               </div>
-            ))}
+
+              {ordersLoading && orders.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-24 text-[#0B1220]/45">
+                  <Loader2
+                    size={22}
+                    className="animate-spin text-[#0B7A6B]"
+                  />
+                  <span className="text-[14px]">Loading orders</span>
+                </div>
+              ) : orders.length === 0 ? (
+                <div className="px-6 py-24 text-center">
+                  <Receipt
+                    size={36}
+                    className="mx-auto mb-4 text-[#0B1220]/25"
+                  />
+                  <p className="text-[16px] font-semibold">
+                    No orders match these filters
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="hidden overflow-x-auto lg:block">
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-[#0B1220]/[0.07]">
+                          {[
+                            'Order',
+                            'Customer',
+                            'Items',
+                            'Amount',
+                            'Status',
+                            '',
+                          ].map((heading, index) => (
+                            <th
+                              key={heading || index}
+                              className="px-5 py-3.5 text-[12px] font-semibold text-[#0B1220]/45"
+                            >
+                              {heading}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+
+                      <tbody className="divide-y divide-[#0B1220]/[0.05]">
+                        {orders.map((order) => (
+                          <tr
+                            key={order._id}
+                            className="cursor-pointer hover:bg-[#0B1220]/[0.015]"
+                            onClick={() => setSelectedOrder(order)}
+                          >
+                            <td className="px-5 py-4 align-top">
+                              <p className="text-[13.5px] font-semibold tabular-nums">
+                                {order.orderNumber}
+                              </p>
+                              <p className="mt-0.5 text-[12px] text-[#0B1220]/45">
+                                {formatTimeOnly(order.createdAt)} ·{' '}
+                                {order.branch?.shortName ||
+                                  order.branch?.name ||
+                                  '—'}
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4 align-top">
+                              <p className="text-[13.5px] font-semibold">
+                                {order.customer.name}
+                              </p>
+                              <p className="mt-0.5 text-[12px] text-[#0B1220]/50">
+                                +91 {order.customer.phone}
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4 align-top text-[13px] text-[#0B1220]/65">
+                              {order.type === 'prescription'
+                                ? 'Prescription request'
+                                : `${order.items.length} item${order.items.length === 1 ? '' : 's'}`}
+                              {order.hasPrescription ? ' · Rx attached' : ''}
+                            </td>
+
+                            <td className="px-5 py-4 align-top text-[13.5px] font-semibold tabular-nums">
+                              {formatMoney(order.estimatedTotal)}
+                            </td>
+
+                            <td className="px-5 py-4 align-top">
+                              <OrderStatusPill status={order.status} />
+                            </td>
+
+                            <td
+                              className="px-5 py-4 text-right"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => messageCustomer(order)}
+                                className="lp-press inline-flex items-center gap-2 rounded-xl bg-[#0B7A6B] px-3.5 py-2 text-[12.5px] font-semibold text-white"
+                              >
+                                <MessageCircle size={15} />
+                                WhatsApp
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <ul className="divide-y divide-[#0B1220]/[0.06] lg:hidden">
+                    {orders.map((order) => (
+                      <li
+                        key={order._id}
+                        className="p-4"
+                        onClick={() => setSelectedOrder(order)}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[14px] font-semibold tabular-nums">
+                              {order.orderNumber}
+                            </p>
+                            <p className="mt-0.5 text-[12px] text-[#0B1220]/45">
+                              {formatDate(order.createdAt)}
+                            </p>
+                          </div>
+                          <span className="text-[15px] font-semibold tabular-nums">
+                            {formatMoney(order.estimatedTotal)}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[13.5px] font-semibold">
+                              {order.customer.name}
+                            </p>
+                            <p className="text-[12px] text-[#0B1220]/50">
+                              {order.items.length} item(s)
+                            </p>
+                          </div>
+                          <OrderStatusPill status={order.status} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {ordersPages > 1 && (
+                    <div className="flex items-center justify-between border-t border-[#0B1220]/[0.07] px-5 py-4">
+                      <span className="text-[12.5px] text-[#0B1220]/50">
+                        Page {ordersPage} of {ordersPages} · {ordersTotal}{' '}
+                        orders
+                      </span>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOrdersPage((page) =>
+                              Math.max(1, page - 1),
+                            )
+                          }
+                          disabled={ordersPage <= 1 || ordersLoading}
+                          className="lp-press flex h-9 w-9 items-center justify-center rounded-full border border-[#0B1220]/10 disabled:opacity-40"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOrdersPage((page) =>
+                              Math.min(ordersPages, page + 1),
+                            )
+                          }
+                          disabled={
+                            ordersPage >= ordersPages || ordersLoading
+                          }
+                          className="lp-press flex h-9 w-9 items-center justify-center rounded-full border border-[#0B1220]/10 disabled:opacity-40"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+
+            <aside className="space-y-6">
+              <section className="rounded-3xl border border-[#0B1220]/[0.06] bg-white p-5">
+                <div className="mb-5 flex items-center justify-between">
+                  <h3 className="text-[15px] font-semibold">Branch load</h3>
+                  <span className="text-[12px] text-[#0B1220]/45">
+                    Last 30 days
+                  </span>
+                </div>
+
+                {stats?.branchPerformance?.length ? (
+                  <ul className="space-y-4">
+                    {stats.branchPerformance.map((entry) => (
+                      <li key={entry.id}>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-[13px] font-semibold">
+                            {entry.name}
+                          </p>
+                          <p className="text-[12px] text-[#0B1220]/55">
+                            {entry.orders} orders
+                          </p>
+                        </div>
+                        <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#0B1220]/[0.06]">
+                          <div
+                            className="h-full rounded-full bg-[#0B7A6B]"
+                            style={{
+                              width: `${Math.max(4, entry.pct)}%`,
+                            }}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="py-6 text-center text-[13px] text-[#0B1220]/50">
+                    No recent orders yet.
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-3xl bg-gradient-to-b from-[#E6F4F1] to-white p-6">
+                <Truck size={21} className="text-[#0B7A6B]" />
+                <h3 className="mt-4 text-[15px] font-semibold text-[#0A6A5D]">
+                  Automated WhatsApp
+                </h3>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-[#0A6A5D]/75">
+                  Customers receive an order confirmation automatically, and a
+                  new message every time you move an order to the next status.
+                  Orders still sitting in the first column had no confirmation
+                  delivered — check the gateway.
+                </p>
+
+                {(stats?.waitingWhatsApp ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter('pending_whatsapp');
+                      setRangeFilter('all');
+                    }}
+                    className="lp-press mt-4 inline-flex items-center gap-2 rounded-full bg-[#0B7A6B] px-4 py-2.5 text-[13px] font-semibold text-white"
+                  >
+                    Show {stats?.waitingWhatsApp} unconfirmed
+                    <ArrowRight size={15} />
+                  </button>
+                )}
+              </section>
+            </aside>
           </div>
         )}
 
-        {/* Orders */}
-        {tab === 'orders' && (
-          <section>
-            <div className="mb-5 flex flex-wrap items-center gap-3">
-              <div className="relative group/select">
-                <select
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value as OrderStatus | 'all')}
-                  className="appearance-none rounded-xl border border-gray-200 bg-white pl-4 pr-10 py-2.5 text-sm font-bold text-gray-700 outline-none transition-all duration-300 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10 hover:border-gray-300 cursor-pointer"
-                >
-                  <option value="all">All orders</option>
-                  {(Object.keys(ORDER_STATUS_LABEL) as OrderStatus[]).map((status) => (
-                    <option key={status} value={status}>
-                      {ORDER_STATUS_LABEL[status]}
-                    </option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 group-hover/select:text-gray-600 transition-colors">
-                  <ChevronLeft size={16} strokeWidth={2.5} className="-rotate-90" />
-                </div>
-              </div>
-              
-              <button
-                type="button"
-                onClick={loadOrders}
-                className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-600 transition-all hover:bg-gray-50 hover:text-gray-900 active:scale-95"
-              >
-                <RefreshCw size={15} className={ordersLoading ? 'animate-spin text-indigo-600' : ''} /> Refresh
-              </button>
-            </div>
-
-            {ordersLoading && orders.length === 0 ? (
-              <div className="py-24 text-center text-gray-400 flex flex-col items-center gap-3">
-                 <Loader2 size={24} className="animate-spin text-indigo-600" />
-                 <span className="text-sm font-bold">Loading orders...</span>
-              </div>
-            ) : orders.length === 0 ? (
-              <div className="rounded-[24px] border-2 border-dashed border-gray-200 bg-white/50 py-24 text-center text-sm font-medium text-gray-500">
-                No orders match this filter.
-              </div>
-            ) : (
-              <ul className="space-y-4">
-                {orders.map((order) => (
-                  <li key={order._id} className="rounded-[24px] border border-gray-200 bg-white p-5 md:p-6 shadow-sm transition-shadow hover:shadow-md">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2.5">
-                          <span className="text-lg font-black tracking-tight text-gray-900 tabular-nums">{order.orderNumber}</span>
-                          <span className={`rounded border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${ORDER_STATUS_STYLE[order.status]}`}>
-                            {ORDER_STATUS_LABEL[order.status]}
-                          </span>
-                          {order.type === 'prescription' && (
-                            <span className="rounded border border-gray-200 bg-gray-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-gray-600">
-                              Prescription
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-2 flex items-center gap-2 text-xs font-bold text-gray-500">
-                          <Clock size={12} strokeWidth={2.5} /> {formatDate(order.createdAt)}
-                          <span className="h-1 w-1 rounded-full bg-gray-300"></span>
-                          <Store size={12} strokeWidth={2.5} /> {order.branch?.name}
-                        </p>
-                      </div>
-                      <span className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-2 text-xl font-black text-gray-900 tabular-nums">
-                        {formatMoney(order.estimatedTotal)}
-                      </span>
-                    </div>
-
-                    <div className="mt-6 grid gap-6 border-t border-gray-100 pt-6 sm:grid-cols-2">
-                      <div className="rounded-2xl bg-gray-50/80 p-5 border border-gray-100">
-                        <p className="font-bold text-gray-900 flex items-center gap-2">
-                           <UserIcon size={16} strokeWidth={2.5} className="text-gray-400" /> {order.customer.name}
-                        </p>
-                        <a href={`tel:+91${order.customer.phone}`} className="mt-1.5 flex items-center gap-2 text-sm font-bold text-indigo-600 transition-colors hover:text-indigo-800 tabular-nums">
-                          <Phone size={14} strokeWidth={2.5} /> +91 {order.customer.phone}
-                        </a>
-                        <p className="mt-3 flex items-start gap-2 text-xs font-medium leading-relaxed text-gray-600">
-                          <MapPin size={14} strokeWidth={2.5} className="mt-0.5 shrink-0 text-gray-400" />
-                          <span>
-                            {order.customer.houseNo}
-                            {order.customer.area ? `, ${order.customer.area}` : ''}
-                            {order.customer.landmark ? `, near ${order.customer.landmark}` : ''}
-                          </span>
-                        </p>
-                      </div>
-
-                      <div className="flex flex-col justify-center">
-                        {order.items.length > 0 && (
-                          <ul className="space-y-3 text-sm font-medium text-gray-700">
-                            {order.items.map((item, index) => (
-                              <li key={index} className="flex justify-between gap-3 border-b border-gray-50 pb-3 last:border-0 last:pb-0">
-                                <span className="truncate">
-                                  {item.displayName} <span className="font-black text-gray-400">×</span> {item.qty}
-                                </span>
-                                <span className="shrink-0 font-bold text-gray-900 tabular-nums">{formatMoney(item.lineTotal)}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        {order.prescriptionUrl && (
-                          <a
-                            href={order.prescriptionUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-3 inline-flex w-fit items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-extrabold text-indigo-700 transition-colors hover:bg-indigo-100"
-                          >
-                            <FileText size={15} strokeWidth={2.5} /> View prescription
-                          </a>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-gray-100 pt-6">
-                      <div className="flex items-center gap-3">
-                        <label htmlFor={`status-${order._id}`} className="text-xs font-bold uppercase tracking-wide text-gray-500">
-                          Update Status
-                        </label>
-                        <div className="relative group/status">
-                          <select
-                            id={`status-${order._id}`}
-                            value={order.status}
-                            onChange={(event) => changeOrderStatus(order._id, event.target.value as OrderStatus)}
-                            className="appearance-none rounded-xl border border-gray-200 bg-white pl-4 pr-10 py-2 text-xs font-bold text-gray-900 outline-none transition-all duration-300 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10 hover:border-gray-300 cursor-pointer"
-                          >
-                            {(Object.keys(ORDER_STATUS_LABEL) as OrderStatus[]).map((status) => (
-                              <option key={status} value={status}>
-                                {ORDER_STATUS_LABEL[status]}
-                              </option>
-                            ))}
-                          </select>
-                          <ChevronLeft size={14} strokeWidth={3} className="-rotate-90 pointer-events-none absolute inset-y-0 right-3 my-auto text-gray-400 transition-colors group-hover/status:text-gray-600" />
-                        </div>
-                        
-                        {order.status === 'pending_whatsapp' && (
-                          <div className="flex items-center gap-1.5 rounded bg-orange-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-orange-700 border border-orange-200">
-                            <MessageSquareWarning size={14} /> Action Required
-                          </div>
-                        )}
-                      </div>
-
-                      <a
-                        href={`https://wa.me/91${order.customer.phone}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 rounded-xl bg-[#25D366] px-5 py-2.5 text-xs font-extrabold text-white shadow-md shadow-[#25D366]/20 transition-all hover:bg-[#20b858] active:scale-95"
-                      >
-                         <Phone size={14} fill="currentColor" /> Chat with customer
-                      </a>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
-
-        {/* Catalogue */}
         {tab === 'catalogue' && (
-          <section className="space-y-6">
+          <section className="space-y-5">
             {showMedicineForm ? (
               <MedicineForm
                 initial={editingMedicine}
                 categories={categories}
+                branches={branches}
                 onCancel={() => {
                   setShowMedicineForm(false);
                   setEditingMedicine(null);
                 }}
                 onSaved={(medicine) => {
                   setMedicines((prev) => {
-                    const exists = prev.some((item) => item._id === medicine._id);
-                    return exists ? prev.map((item) => (item._id === medicine._id ? medicine : item)) : [medicine, ...prev];
+                    const exists = prev.some(
+                      (item) => item._id === medicine._id,
+                    );
+
+                    return exists
+                      ? prev.map((item) =>
+                          item._id === medicine._id
+                            ? medicine
+                            : item,
+                        )
+                      : [medicine, ...prev];
                   });
+
                   setShowMedicineForm(false);
                   setEditingMedicine(null);
-                  notify(editingMedicine ? 'Medicine updated.' : 'Medicine added.');
+                  notify('Medicine saved.');
                   loadStats();
                 }}
                 onError={(message) => notify(message, 'error')}
@@ -1629,77 +4279,125 @@ function AdminPanel({
                     setEditingMedicine(null);
                     setShowMedicineForm(true);
                   }}
-                  className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-700 active:scale-95"
+                  className="lp-press flex items-center gap-2 rounded-full bg-[#0B7A6B] px-5 py-2.5 text-[13px] font-semibold text-white"
                 >
-                  <Plus size={18} strokeWidth={2.5} /> Add Medicine
+                  <Plus size={17} />
+                  Add medicine
                 </button>
-                <button
-                  type="button"
-                  onClick={() => loadMedicines(true)}
-                  className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-bold text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50 active:scale-95"
-                >
-                  <RefreshCw size={15} className={medicinesLoading ? 'animate-spin text-indigo-600' : ''} /> Refresh List
-                </button>
+
+                <div className="w-full sm:w-[280px]">
+                  <SearchInput
+                    id="admin-medicine-search"
+                    label="Search catalogue"
+                    placeholder="Search catalogue"
+                    value={medicineSearch}
+                    onChange={setMedicineSearch}
+                    busy={
+                      medicineSearch.trim() !==
+                      debouncedMedicineSearch
+                    }
+                  />
+                </div>
               </div>
             )}
 
-            <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
-              <ul className="divide-y divide-gray-100">
-                {medicines.map((medicine) => (
-                  <li key={medicine._id} className="flex items-center gap-4 p-4 md:p-5 transition-colors hover:bg-gray-50">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-gray-50 text-2xl ring-1 ring-inset ring-gray-200/50">
-                      <ProductThumb medicine={medicine} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-base font-bold text-gray-900">{medicine.name}</p>
-                      <p className="mt-1 flex items-center gap-2 truncate text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                        <span className="rounded border border-gray-200 bg-white px-1.5 py-0.5">{medicine.category}</span>
-                        <span className="text-indigo-600">{formatMoney(medicine.price)}</span>
-                      </p>
-                    </div>
-                    {!medicine.isActive && (
-                      <span className="rounded border border-gray-200 bg-gray-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-500">Hidden</span>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingMedicine(medicine);
-                          setShowMedicineForm(true);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        aria-label={`Edit ${medicine.name}`}
-                        className="rounded-xl p-2.5 text-gray-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600 active:scale-95"
-                      >
-                        <Pencil size={18} strokeWidth={2.5} />
-                      </button>
-                      {medicine.isActive && (
+            <div className="overflow-hidden rounded-3xl border border-[#0B1220]/[0.06] bg-white">
+              <ul className="divide-y divide-[#0B1220]/[0.06]">
+                {medicines.map((medicine) => {
+                  const totalStock = medicine.inventory?.reduce(
+                    (sum, row) =>
+                      sum +
+                      (row.isAvailable ? row.stockUnits : 0),
+                    0,
+                  );
+
+                  return (
+                    <li
+                      key={medicine._id}
+                      className="flex items-center gap-4 p-4 md:p-5"
+                    >
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#0B1220]/[0.04] text-2xl">
+                        <ProductThumb medicine={medicine} />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[15px] font-semibold">
+                          {medicine.name}
+                        </p>
+                        <p className="mt-0.5 flex flex-wrap gap-2 text-[12.5px] text-[#0B1220]/55">
+                          <span>{medicine.category}</span>
+                          <span className="font-semibold text-[#0B7A6B]">
+                            {formatMoney(medicine.price)}
+                          </span>
+                          <span>{totalStock || 0} stock units</span>
+                          {medicine.requiresPrescription && (
+                            <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-600">
+                              Rx
+                            </span>
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => hideMedicine(medicine)}
-                          aria-label={`Hide ${medicine.name}`}
-                          className="rounded-xl p-2.5 text-gray-400 transition-colors hover:bg-rose-50 hover:text-rose-600 active:scale-95"
+                          onClick={() => {
+                            setEditingMedicine(medicine);
+                            setShowMedicineForm(true);
+                            window.scrollTo({
+                              top: 0,
+                              behavior: 'smooth',
+                            });
+                          }}
+                          className="lp-press rounded-full p-2.5 text-[#0B1220]/40 hover:bg-[#E6F4F1] hover:text-[#0B7A6B]"
                         >
-                          <EyeOff size={18} strokeWidth={2.5} />
+                          <Pencil size={17} />
                         </button>
-                      )}
-                    </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMedicineVisibility(
+                              medicine,
+                              !medicine.isActive,
+                            )
+                          }
+                          className="lp-press rounded-full p-2.5 text-[#0B1220]/40"
+                        >
+                          {medicine.isActive ? (
+                            <EyeOff size={17} />
+                          ) : (
+                            <Eye size={17} />
+                          )}
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+
+                {medicinesLoading && medicines.length === 0 && (
+                  <li className="flex items-center justify-center gap-2 py-24 text-[14px] text-[#0B1220]/45">
+                    <Loader2
+                      size={18}
+                      className="animate-spin text-[#0B7A6B]"
+                    />
+                    Loading catalogue
                   </li>
-                ))}
-                {medicines.length === 0 && !medicinesLoading && (
-                  <li className="py-24 text-center text-sm font-medium text-gray-500">Nothing in the catalogue yet.</li>
                 )}
               </ul>
-              
+
               {hasMoreMedicines && !showMedicineForm && (
-                <div className="bg-gray-50/50 p-5 border-t border-gray-100 flex justify-center">
-                   <button
-                    onClick={() => loadMedicines(false)}
+                <div className="flex justify-center border-t border-[#0B1220]/[0.06] p-5">
+                  <button
+                    type="button"
+                    onClick={() => loadMedicines('more')}
                     disabled={medicinesLoading}
-                    className="rounded-xl border border-gray-200 bg-white px-6 py-2.5 text-sm font-bold text-gray-700 shadow-sm transition-all hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50 active:scale-95"
+                    className="lp-press flex items-center gap-2 rounded-full bg-[#0B1220]/[0.05] px-6 py-2.5 text-[13px] font-semibold"
                   >
-                    {medicinesLoading ? <Loader2 size={16} className="inline animate-spin mr-2" /> : null}
-                    Load More
+                    {medicinesLoading && (
+                      <Loader2 size={15} className="animate-spin" />
+                    )}
+                    Load more
                   </button>
                 </div>
               )}
@@ -1707,9 +4405,8 @@ function AdminPanel({
           </section>
         )}
 
-        {/* Branches */}
         {tab === 'branches' && (
-          <section className="space-y-6">
+          <section className="space-y-5">
             {showBranchForm ? (
               <BranchForm
                 branch={editingBranch}
@@ -1718,14 +4415,18 @@ function AdminPanel({
                   setEditingBranch(null);
                 }}
                 onSaved={(updated) => {
-                  if (editingBranch) {
-                    onBranchesChange(branches.map((item) => (item._id === updated._id ? updated : item)));
-                  } else {
-                    onBranchesChange([...branches, updated]);
-                  }
+                  onBranchesChange(
+                    editingBranch
+                      ? branches.map((item) =>
+                          item._id === updated._id
+                            ? updated
+                            : item,
+                        )
+                      : [...branches, updated],
+                  );
                   setShowBranchForm(false);
                   setEditingBranch(null);
-                  notify(editingBranch ? 'Branch updated successfully.' : 'New branch created.');
+                  notify('Branch saved.');
                 }}
                 onError={(message) => notify(message, 'error')}
               />
@@ -1738,87 +4439,180 @@ function AdminPanel({
                       setEditingBranch(null);
                       setShowBranchForm(true);
                     }}
-                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-700 active:scale-95"
+                    className="lp-press flex items-center gap-2 rounded-full bg-[#0B7A6B] px-5 py-2.5 text-[13px] font-semibold text-white"
                   >
-                    <Plus size={18} strokeWidth={2.5} /> Add Branch
+                    <Plus size={17} />
+                    Add branch
                   </button>
                 </div>
-                {branches.length === 0 && (
-                  <div className="rounded-[24px] border-2 border-dashed border-gray-200 bg-white/50 py-24 text-center text-sm font-medium text-gray-500">
-                    No branches setup yet. Add your first branch.
-                  </div>
-                )}
-                {branches.map((branch) => (
-                  <div key={branch._id} className="rounded-3xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm transition-shadow hover:shadow-md">
-                    <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <div className="mb-4 flex items-center gap-3">
-                          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-gray-50 text-indigo-600 ring-1 ring-gray-200">
-                             <Store size={22} strokeWidth={2.5} aria-hidden="true" />
+
+                <div className="grid gap-5 lg:grid-cols-2">
+                  {branches.map((branch) => (
+                    <div
+                      key={branch._id}
+                      className="rounded-3xl border border-[#0B1220]/[0.06] bg-white p-6"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#E6F4F1] text-[#0B7A6B]">
+                            <Store size={21} />
                           </span>
+
                           <div>
-                            <h3 className="text-xl font-black text-gray-900 tracking-tight">{branch.name}</h3>
-                            {!branch.isActive && (
-                              <span className="mt-1 inline-block rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">Paused</span>
-                            )}
+                            <h3 className="text-[17px] font-semibold">
+                              {branch.name}
+                            </h3>
+                            <p className="text-[13px] text-[#0B1220]/55">
+                              {branch.address}
+                            </p>
                           </div>
                         </div>
-                        <div className="ml-14 space-y-2">
-                          <p className="flex items-center gap-2.5 text-sm font-bold text-gray-600 tabular-nums">
-                            <Phone size={15} strokeWidth={2.5} className="text-gray-400" aria-hidden="true" /> +{branch.phone}
-                          </p>
-                          <p className="flex items-start gap-2.5 text-sm font-medium leading-relaxed text-gray-600">
-                            <MapPin size={15} strokeWidth={2.5} className="mt-0.5 shrink-0 text-gray-400" aria-hidden="true" /> {branch.fullAddress}
-                          </p>
-                          <p className="flex items-center gap-2.5 text-xs font-bold text-gray-400 tabular-nums">
-                            <Navigation size={13} strokeWidth={2.5} aria-hidden="true" /> {branch.lat}, {branch.lng}
-                          </p>
-                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingBranch(branch);
+                            setShowBranchForm(true);
+                          }}
+                          className="lp-press flex items-center gap-2 rounded-full bg-[#0B1220]/[0.06] px-4 py-2 text-[12.5px] font-semibold"
+                        >
+                          <Pencil size={14} />
+                          Edit
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingBranch(branch);
-                          setShowBranchForm(true);
-                        }}
-                        className="flex shrink-0 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-bold text-gray-700 transition-all hover:bg-gray-50 hover:border-gray-300 active:scale-95"
-                      >
-                        <Pencil size={16} strokeWidth={2.5} /> Edit Branch
-                      </button>
+
+                      <div className="mt-4 space-y-2 border-t border-[#0B1220]/[0.07] pt-4 text-[13px] text-[#0B1220]/65">
+                        <p>+{branch.phone}</p>
+                        <p>{branch.fullAddress}</p>
+                        <p>
+                          Service radius: {branch.serviceRadiusKm} km ·{' '}
+                          {branch.open24h ? 'Open 24h' : 'Custom hours'}
+                        </p>
+                      </div>
+
+                      {!branch.isActive && (
+                        <p className="mt-4 rounded-2xl bg-amber-50 px-4 py-2.5 text-[12.5px] font-medium text-amber-700">
+                          Paused — customers cannot send orders here.
+                        </p>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </>
             )}
           </section>
         )}
       </main>
+
+      <OrderDetailSheet
+        order={selectedOrder}
+        onClose={() => setSelectedOrder(null)}
+        onStatusChange={changeOrderStatus}
+        onMessageCustomer={messageCustomer}
+        notify={notify}
+      />
     </div>
   );
 }
 
 /* ================================================================== */
-/*  Root page                                                         */
+/*  Global CSS                                                         */
 /* ================================================================== */
 
+const GLOBAL_CSS = `
+  .lp-shell {
+    --lp-ios: cubic-bezier(0.32, 0.72, 0, 1);
+    --lp-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.011em;
+  }
+  .lp-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+  .lp-scroll::-webkit-scrollbar-track { background: transparent; }
+  .lp-scroll::-webkit-scrollbar-thumb { background: rgba(11,18,32,0.18); border-radius: 999px; }
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .lp-panel { transition: transform 0.42s var(--lp-ios), opacity 0.3s var(--lp-ios); }
+  .lp-seg { transition: transform 0.38s var(--lp-ios); }
+  .lp-knob { transition: transform 0.28s var(--lp-ios); }
+  .lp-press { transition: transform 0.18s var(--lp-spring), background-color 0.2s ease, color 0.2s ease; }
+  .lp-press:active { transform: scale(0.94); }
+
+  @keyframes lpPop { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes lpRise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  @keyframes lpToast { from { opacity: 0; transform: translateY(-14px) scale(0.96); } to { opacity: 1; transform: none; } }
+  @keyframes lpShimmer { to { transform: translateX(100%); } }
+  @keyframes lpDrift { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(28px,-34px,0) scale(1.12); } }
+
+  .lp-pop { animation: lpPop 0.35s var(--lp-spring) both; }
+  .lp-rise { animation: lpRise 0.5s var(--lp-ios) both; }
+  .lp-toast { animation: lpToast 0.4s var(--lp-spring) both; }
+  .lp-count { animation: lpPop 0.24s var(--lp-spring) both; }
+  .lp-drift { animation: lpDrift 16s ease-in-out infinite; }
+
+  .lp-skeleton { position: relative; overflow: hidden; background: rgba(11,18,32,0.06); }
+  .lp-skeleton::after {
+    content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.75), transparent);
+    animation: lpShimmer 1.6s infinite;
+  }
+
+  .lp-grain {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .lp-fade-x {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+  }
+
+  .lp-shell :focus-visible {
+    outline: 2px solid #0B7A6B;
+    outline-offset: 2px;
+    border-radius: 12px;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lp-shell *, .lp-shell *::before, .lp-shell *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+`;
+
+
+
 export default function Page() {
-  /* ---------------- Session and data ---------------- */
   const [user, setUser] = useState<AuthUser | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
   const [view, setView] = useState<'store' | 'admin'>('store');
 
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [categoryPool, setCategoryPool] = useState<string[]>([]);
   const [catalogueLoading, setCatalogueLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [catalogueError, setCatalogueError] = useState<string | null>(null);
-  const [storePage, setStorePage] = useState(1);
-  const [hasMoreStoreMedicines, setHasMoreStoreMedicines] = useState(false);
+  const [branchesLoading, setBranchesLoading] = useState(true);
+  const [branchesError, setBranchesError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
 
-  /* ---------------- Storefront state ---------------- */
   const [searchQuery, setSearchQuery] = useState('');
-  const deferredQuery = useDeferredValue(searchQuery);
-  const [activeCategory, setActiveCategory] = useState('All');
+  const debouncedQuery = useDebouncedValue(
+    searchQuery.trim(),
+    SEARCH_DEBOUNCE_MS,
+  );
+  const [activeCategory, setActiveCategory] = useState(ALL_CATEGORIES);
+
+  const pageRef = useRef(1);
+  const busyRef = useRef(false);
+  const requestRef = useRef<AbortController | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartHydrated, setCartHydrated] = useState(false);
@@ -1826,48 +4620,81 @@ export default function Page() {
   const [isPrescriptionOpen, setIsPrescriptionOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const [toast, setToast] = useState<{ id: number; text: string; tone: 'success' | 'error' } | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastTimers = useRef<number[]>([]);
 
   const [prescriptionFile, setPrescriptionFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const prescriptionInputRef = useRef<HTMLInputElement>(null);
 
-  const [address, setAddress] = useState<AddressForm>({ name: '', phone: '', houseNo: '', area: '', landmark: '' });
+  const [cartRxFile, setCartRxFile] = useState<File | null>(null);
+  const [cartRxPreview, setCartRxPreview] = useState<string | null>(null);
+  const [cartRxError, setCartRxError] = useState<string | null>(null);
+  const cartRxInputRef = useRef<HTMLInputElement>(null);
+
+  const [address, setAddress] = useState<AddressForm>({
+    name: '',
+    phone: '',
+    houseNo: '',
+    area: '',
+    landmark: '',
+  });
   const [addressErrors, setAddressErrors] = useState<FieldErrors>({});
 
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
-  const [locateStatus, setLocateStatus] = useState<LocateStatus>('idle');
+  const [locateStatus, setLocateStatus] =
+    useState<LocateStatus>('idle');
   const [locateError, setLocateError] = useState<string | null>(null);
-  const [detectedDistance, setDetectedDistance] = useState<number | null>(null);
+  const [detectedDistance, setDetectedDistance] =
+    useState<number | null>(null);
 
-  const cartPanelRef = useRef<HTMLDivElement>(null);
-  const prescriptionPanelRef = useRef<HTMLDivElement>(null);
+  const checkoutKeyRef = useRef<string | null>(null);
+  const prescriptionKeyRef = useRef<string | null>(null);
 
-  /* ---------------- Toast ---------------- */
+  const notify = useCallback(
+    (text: string, tone: ToastTone = 'success') => {
+      const id = Date.now() + Math.random();
 
-  const notify = useCallback((text: string, tone: 'success' | 'error' = 'success') => {
-    setToast({ id: Date.now(), text, tone });
-  }, []);
+      setToasts((prev) => [
+        ...prev.slice(-2),
+        { id, text, tone },
+      ]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3500); 
-    return () => clearTimeout(timer);
-  }, [toast]);
+      const timer = window.setTimeout(() => {
+        setToasts((prev) =>
+          prev.filter((toast) => toast.id !== id),
+        );
+      }, 3600);
 
-  /* ---------------- Session ---------------- */
+      toastTimers.current.push(timer);
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      toastTimers.current.forEach(window.clearTimeout);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
+
     api<{ user: AuthUser }>('/api/auth/me')
       .then((data) => {
         if (!cancelled) setUser(data.user);
       })
-      .catch(() => {})
+      .catch(() => {
+        // Guest mode is intentional.
+      })
       .finally(() => {
         if (!cancelled) setSessionChecked(true);
       });
+
+    ensureCsrf().catch(() => {});
+
     return () => {
       cancelled = true;
     };
@@ -1875,98 +4702,208 @@ export default function Page() {
 
   useEffect(() => {
     if (!user) return;
+
+    const saved = user.addresses?.[0];
+
     setAddress((prev) => ({
-      ...prev,
       name: prev.name || user.name,
       phone: prev.phone || user.phone,
+      houseNo: prev.houseNo || saved?.houseNo || '',
+      area: prev.area || saved?.area || '',
+      landmark: prev.landmark || saved?.landmark || '',
     }));
   }, [user]);
 
-  /* ---------------- Catalogue ---------------- */
+  const loadBranches = useCallback(async () => {
+    setBranchesLoading(true);
+    setBranchesError(null);
 
-  const loadCatalogue = useCallback(async (reset = false) => {
-    if (reset) setCatalogueLoading(true);
-    setCatalogueError(null);
     try {
-      const fetchPage = reset ? 1 : storePage;
-      const searchParam = deferredQuery ? `&search=${encodeURIComponent(deferredQuery)}` : '';
-      const categoryParam = activeCategory !== 'All' ? `&category=${encodeURIComponent(activeCategory)}` : '';
-      
-      const [medicineData, branchData] = await Promise.all([
-        api<{ items: Medicine[], pages: number }>(`/api/medicines?limit=30&page=${fetchPage}${searchParam}${categoryParam}`),
-        reset ? api<{ branches: Branch[] }>('/api/branches') : Promise.resolve({ branches: branches })
-      ]);
-      
-      setMedicines(prev => reset ? medicineData.items : [...prev, ...medicineData.items]);
-      if (reset) {
-         setBranches(branchData.branches);
-         setSelectedBranch((prev) => prev ?? branchData.branches[0] ?? null);
-      }
-      setStorePage(fetchPage + 1);
-      setHasMoreStoreMedicines(fetchPage < medicineData.pages);
-      
+      const data = await api<{ branches: Branch[] }>(
+        '/api/branches',
+      );
+      const active = data.branches.filter(
+        (branch) => branch.isActive,
+      );
+
+      setBranches(data.branches);
+      setSelectedBranch((prev) => {
+        if (prev && active.some((branch) => branch._id === prev._id)) {
+          return prev;
+        }
+        return active[0] ?? null;
+      });
     } catch (error) {
-      setCatalogueError(error instanceof ApiError ? error.message : 'Could not load the store.');
+      setBranchesError(
+        errorText(
+          error,
+          'Branches could not be loaded. Ordering is temporarily unavailable.',
+        ),
+      );
     } finally {
-      setCatalogueLoading(false);
+      setBranchesLoading(false);
     }
-  }, [storePage, deferredQuery, activeCategory, branches]);
+  }, []);
 
   useEffect(() => {
-     setStorePage(1);
-     loadCatalogue(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deferredQuery, activeCategory]);
+    loadBranches();
+  }, [loadBranches]);
 
-  /* ---------------- Cart persistence ---------------- */
+  const loadMedicines = useCallback(
+    async (mode: 'reset' | 'more') => {
+      if (mode === 'more' && busyRef.current) return;
+      if (mode === 'reset') requestRef.current?.abort();
 
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(CART_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) setCart(parsed);
+      const controller = new AbortController();
+      requestRef.current = controller;
+      busyRef.current = true;
+
+      const page =
+        mode === 'reset' ? 1 : pageRef.current + 1;
+
+      if (mode === 'reset') {
+        setCatalogueLoading(true);
+      } else {
+        setLoadingMore(true);
       }
-    } catch {
-      window.localStorage.removeItem(CART_STORAGE_KEY);
-    }
+
+      setCatalogueError(null);
+
+      try {
+        const params = new URLSearchParams({
+          limit: String(PAGE_SIZE),
+          page: String(page),
+        });
+
+        if (debouncedQuery) params.set('search', debouncedQuery);
+        if (activeCategory !== ALL_CATEGORIES) {
+          params.set('category', activeCategory);
+        }
+        if (selectedBranch?._id) {
+          params.set('branchId', selectedBranch._id);
+        }
+
+        const data = await api<{
+          items: Medicine[];
+          pages: number;
+        }>(`/api/medicines?${params.toString()}`, {
+          signal: controller.signal,
+        });
+
+        pageRef.current = page;
+
+        setMedicines((prev) =>
+          mode === 'reset' ? data.items : [...prev, ...data.items],
+        );
+        setHasMore(page < (data.pages || 1));
+
+        setCategoryPool((prev) => {
+          const merged = new Set(prev);
+          data.items.forEach((item) => {
+            if (item.category) merged.add(item.category);
+          });
+          return Array.from(merged).sort();
+        });
+      } catch (error) {
+        if (isAbortError(error)) return;
+        setCatalogueError(
+          errorText(error, 'The store could not be loaded.'),
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          busyRef.current = false;
+          setCatalogueLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [
+      activeCategory,
+      debouncedQuery,
+      selectedBranch?._id,
+    ],
+  );
+
+  useEffect(() => {
+    loadMedicines('reset');
+  }, [loadMedicines]);
+
+  useEffect(
+    () => () => {
+      requestRef.current?.abort();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasMore || catalogueLoading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          loadMedicines('more');
+        }
+      },
+      { rootMargin: '500px 0px' },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [catalogueLoading, hasMore, loadMedicines]);
+
+  useEffect(() => {
+    setCart(
+      parseStoredCart(
+        window.localStorage.getItem(CART_STORAGE_KEY),
+      ),
+    );
     setCartHydrated(true);
   }, []);
 
   useEffect(() => {
     if (!cartHydrated) return;
-    try {
-      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
-    } catch {}
-  }, [cart, cartHydrated]);
 
-  /* ---------------- Object URL cleanup ---------------- */
+    try {
+      window.localStorage.setItem(
+        CART_STORAGE_KEY,
+        JSON.stringify(cart),
+      );
+    } catch {
+      // Storage can fail in strict/private browsing modes.
+    }
+  }, [cart, cartHydrated]);
 
   useEffect(() => {
     if (!previewUrl) return;
     return () => URL.revokeObjectURL(previewUrl);
   }, [previewUrl]);
 
-  /* ---------------- Overlays ---------------- */
-
-  const closeCart = useCallback(() => setIsCartOpen(false), []);
-  const closePrescription = useCallback(() => setIsPrescriptionOpen(false), []);
-
-  useBodyScrollLock(isCartOpen || isPrescriptionOpen);
-  useEscapeKey(isCartOpen, closeCart);
-  useEscapeKey(isPrescriptionOpen, closePrescription);
-  useReturnFocus(isCartOpen, cartPanelRef);
-  useReturnFocus(isPrescriptionOpen, prescriptionPanelRef);
-
-  /* ---------------- Derived ---------------- */
+  useEffect(() => {
+    if (!cartRxPreview) return;
+    return () => URL.revokeObjectURL(cartRxPreview);
+  }, [cartRxPreview]);
 
   const categories = useMemo(
-    () => ['All', ...Array.from(new Set(medicines.map((medicine) => medicine.category))).sort()],
-    [medicines],
+    () => [ALL_CATEGORIES, ...categoryPool],
+    [categoryPool],
+  );
+
+  const activeBranches = useMemo(
+    () => branches.filter((branch) => branch.isActive),
+    [branches],
   );
 
   const cartQuantities = useMemo(
-    () => Object.fromEntries(cart.map((item) => [item.cartItemId, item.qty])),
+    () =>
+      Object.fromEntries(
+        cart.map((item) => [item.cartItemId, item.qty]),
+      ),
+    [cart],
+  );
+
+  const cartNeedsPrescription = useMemo(
+    () => cart.some((item) => item.requiresPrescription),
     [cart],
   );
 
@@ -1976,29 +4913,83 @@ export default function Page() {
         (acc, item) => ({
           itemCount: acc.itemCount + item.qty,
           total: acc.total + item.unitPrice * item.qty,
-          savings: acc.savings + Math.max(0, item.unitMrp - item.unitPrice) * item.qty,
+          savings:
+            acc.savings +
+            Math.max(0, item.unitMrp - item.unitPrice) *
+              item.qty,
         }),
-        { itemCount: 0, total: 0, savings: 0 },
+        {
+          itemCount: 0,
+          total: 0,
+          savings: 0,
+        },
       ),
     [cart],
   );
 
-  /* ---------------- Cart actions ---------------- */
-
   const addToCart = useCallback(
     (medicine: Medicine, buyType: BuyType) => {
+      if (!selectedBranch) {
+        notify('Choose an available branch first.', 'error');
+        return;
+      }
+
+      const stock = getInventoryForBranch(
+        medicine,
+        selectedBranch._id,
+      );
+
+      const unitsNeeded =
+        buyType === 'loose'
+          ? 1
+          : medicine.isDivisible
+            ? medicine.packSize
+            : 1;
+
+      if (
+        !stock ||
+        !stock.isAvailable ||
+        stock.stockUnits < unitsNeeded
+      ) {
+        notify(
+          `${medicine.name} is out of stock at ${selectedBranch.shortName || selectedBranch.name}.`,
+          'error',
+        );
+        return;
+      }
+
       const cartItemId = `${medicine._id}-${buyType}`;
+      const divisor = Math.max(1, medicine.packSize);
       const unitPrice =
-        buyType === 'loose' ? Number((medicine.price / medicine.packSize).toFixed(2)) : medicine.price;
-      const unitMrp = buyType === 'loose' ? Number((medicine.mrp / medicine.packSize).toFixed(2)) : medicine.mrp;
+        buyType === 'loose'
+          ? Number((medicine.price / divisor).toFixed(2))
+          : medicine.price;
+      const unitMrp =
+        buyType === 'loose'
+          ? Number((medicine.mrp / divisor).toFixed(2))
+          : medicine.mrp;
 
       setCart((prev) => {
-        const existing = prev.find((item) => item.cartItemId === cartItemId);
+        const existing = prev.find(
+          (item) => item.cartItemId === cartItemId,
+        );
+
         if (existing) {
           return prev.map((item) =>
-            item.cartItemId === cartItemId ? { ...item, qty: Math.min(item.qty + 1, MAX_QTY_PER_ITEM) } : item,
+            item.cartItemId === cartItemId
+              ? {
+                  ...item,
+                  qty: Math.min(
+                    item.qty + 1,
+                    MAX_QTY_PER_ITEM,
+                  ),
+                }
+              : item,
           );
         }
+
+        if (prev.length >= MAX_CART_LINES) return prev;
+
         return [
           ...prev,
           {
@@ -2015,42 +5006,78 @@ export default function Page() {
             qty: 1,
             unitPrice,
             unitMrp,
+            requiresPrescription:
+              medicine.requiresPrescription,
           },
         ];
       });
 
-      notify(`${medicine.name} added`);
+      checkoutKeyRef.current = null;
     },
-    [notify],
+    [notify, selectedBranch],
   );
 
-  const updateQty = useCallback((cartItemId: string, delta: number) => {
-    setCart((prev) =>
-      prev.flatMap((item) => {
-        if (item.cartItemId !== cartItemId) return item;
-        const nextQty = Math.min(item.qty + delta, MAX_QTY_PER_ITEM);
-        return nextQty > 0 ? { ...item, qty: nextQty } : [];
-      }),
-    );
-  }, []);
+  const updateQty = useCallback(
+    (cartItemId: string, delta: number) => {
+      setCart((prev) =>
+        prev.flatMap((item) => {
+          if (item.cartItemId !== cartItemId) return item;
 
-  const removeFromCart = useCallback((cartItemId: string) => {
-    setCart((prev) => prev.filter((item) => item.cartItemId !== cartItemId));
-  }, []);
+          const nextQty = Math.min(
+            item.qty + delta,
+            MAX_QTY_PER_ITEM,
+          );
 
-  const handleAddressChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = event.target;
-    const nextValue = name === 'phone' ? digitsOnly(value).slice(0, 10) : value;
-    setAddress((prev) => ({ ...prev, [name]: nextValue }));
-    setAddressErrors((prev) => (prev[name] ? { ...prev, [name]: undefined } : prev));
-  }, []);
+          return nextQty > 0
+            ? { ...item, qty: nextQty }
+            : [];
+        }),
+      );
+      checkoutKeyRef.current = null;
+    },
+    [],
+  );
 
-  /* ---------------- Branch ---------------- */
+  const removeFromCart = useCallback(
+    (cartItemId: string) => {
+      setCart((prev) =>
+        prev.filter((item) => item.cartItemId !== cartItemId),
+      );
+      checkoutKeyRef.current = null;
+    },
+    [],
+  );
+
+  const handleAddressChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const { name, value } = event.target;
+      const nextValue =
+        name === 'phone'
+          ? digitsOnly(value).slice(0, 10)
+          : value;
+
+      setAddress((prev) => ({
+        ...prev,
+        [name]: nextValue,
+      }));
+
+      setAddressErrors((prev) =>
+        prev[name] ? { ...prev, [name]: undefined } : prev,
+      );
+    },
+    [],
+  );
 
   const detectNearestBranch = useCallback(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation || branches.length === 0) {
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.geolocation ||
+      activeBranches.length === 0
+    ) {
       setLocateStatus('error');
-      setLocateError('This browser cannot share location. Pick a branch manually.');
+      setLocateError(
+        'This browser cannot share a location. Choose a branch below.',
+      );
       return;
     }
 
@@ -2058,382 +5085,535 @@ export default function Page() {
     setLocateError(null);
 
     navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => {
-        let nearestBranch = branches[0];
-        let minDistance = Number.POSITIVE_INFINITY;
-        
-        for (const branch of branches) {
-           const d = distanceInKm(coords.latitude, coords.longitude, branch.lat, branch.lng);
-           if (d < minDistance) {
-              minDistance = d;
-              nearestBranch = branch;
-           }
-        }
-        
-        const actualRoutingDistance = await getRoutingDistance(coords.latitude, coords.longitude, nearestBranch.lat, nearestBranch.lng);
+      ({ coords }) => {
+        let nearest = activeBranches[0];
+        let shortest = Number.POSITIVE_INFINITY;
 
-        setSelectedBranch(nearestBranch);
-        setDetectedDistance(actualRoutingDistance);
+        for (const branch of activeBranches) {
+          const kilometres = distanceInKm(
+            coords.latitude,
+            coords.longitude,
+            branch.lat,
+            branch.lng,
+          );
+
+          if (kilometres < shortest) {
+            shortest = kilometres;
+            nearest = branch;
+          }
+        }
+
+        setSelectedBranch(nearest);
+        setDetectedDistance(
+          Number.isFinite(shortest) ? shortest : null,
+        );
         setLocateStatus('success');
-        notify(`Nearest branch: ${nearestBranch.name}`);
+
+        if (shortest > nearest.serviceRadiusKm) {
+          notify(
+            `Nearest branch is ${shortest.toFixed(1)} km away, outside its ${nearest.serviceRadiusKm} km delivery radius. Call the branch before ordering.`,
+            'error',
+          );
+        } else {
+          notify(
+            `Nearest branch: ${nearest.shortName || nearest.name}`,
+          );
+        }
       },
       (error) => {
         setLocateStatus('error');
         setLocateError(geolocationMessage(error));
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 300000,
+      },
     );
-  }, [branches, notify]);
+  }, [activeBranches, notify]);
 
   const selectBranch = useCallback(
     (branchId: string) => {
-      const branch = branches.find((item) => item._id === branchId);
+      const branch = branches.find(
+        (item) => item._id === branchId,
+      );
       if (!branch) return;
+
       setSelectedBranch(branch);
       setDetectedDistance(null);
       setLocateStatus('idle');
       setLocateError(null);
+      checkoutKeyRef.current = null;
     },
     [branches],
   );
 
-  /* ---------------- Checkout ---------------- */
+  const focusFirstError = useCallback(
+    (errors: FieldErrors) => {
+      window.setTimeout(() => {
+        const target = document.getElementById(
+          `field-${Object.keys(errors)[0]}`,
+        );
 
-  const openWhatsApp = useCallback((phone: string, message: string) => {
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-    const opened = window.open(url, '_blank', 'noopener,noreferrer');
-    if (!opened) window.location.href = url;
-  }, []);
+        target?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
 
-  const handleCheckout = useCallback(async () => {
-    if (!selectedBranch) return;
+        (target as HTMLInputElement | null)?.focus({
+          preventScroll: true,
+        });
+      }, 80);
+    },
+    [],
+  );
 
-    const errors = validateAddress(address, true);
-    setAddressErrors(errors);
-    if (Object.keys(errors).length > 0) {
-      notify('Please check the highlighted delivery details.', 'error');
-      
-      setTimeout(() => {
-        document.getElementById('field-name')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 100);
-      return;
-    }
-    if (cart.length === 0) return;
-
-    setSubmitting(true);
-    try {
-      const data = await api<{ order: { orderNumber: string; estimatedTotal: number } }>('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          type: 'cart',
-          branchId: selectedBranch._id,
-          customer: address,
-          items: cart.map((item) => ({ medicineId: item.medicineId, buyType: item.buyType, qty: item.qty })),
-        }),
-      });
-
-      const lines = [
-        `Order ${data.order.orderNumber} — ${selectedBranch.name}`,
-        '',
-        `Name: ${sanitizeForMessage(address.name)}`,
-        `Phone: ${digitsOnly(address.phone)}`,
-        `Address: ${sanitizeForMessage(address.houseNo)}, ${sanitizeForMessage(address.area)}${
-          address.landmark ? `, near ${sanitizeForMessage(address.landmark)}` : ''
-        }`,
-        '',
-        'Items:',
-        ...cart.map(
-          (item, index) =>
-            `${index + 1}. ${sanitizeForMessage(item.displayName, 80)} x ${item.qty} = ${formatMoney(
-              item.unitPrice * item.qty,
-            )}`,
-        ),
-        '',
-        `Estimated total: ${formatMoney(data.order.estimatedTotal)}`,
-        '',
-        'Please confirm availability and the final bill.',
-      ];
-
-      openWhatsApp(selectedBranch.phone, lines.join('\n'));
-      setCart([]);
-      setIsCartOpen(false);
-      notify(`Order ${data.order.orderNumber} placed securely!`);
-    } catch (error) {
-      if (error instanceof ApiError) {
-        notify(error.message, 'error');
-        if (error.details) setAddressErrors(error.details);
-      } else {
-        notify('Could not place the order.', 'error');
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }, [address, cart, notify, openWhatsApp, selectedBranch]);
-
-  /* ---------------- Prescription ---------------- */
-
-  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+  const pickPrescription = (
+    event: React.ChangeEvent<HTMLInputElement>,
+    target: 'standalone' | 'cart',
+  ) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
 
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      setUploadError('Upload a JPG, PNG or WEBP photo of the prescription.');
+      const message =
+        'The photo must be a JPG, PNG, WEBP or HEIC image.';
+      if (target === 'cart') {
+        setCartRxError(message);
+      } else {
+        setUploadError(message);
+      }
       return;
     }
+
     if (file.size > MAX_UPLOAD_BYTES) {
-      setUploadError('That photo is over 5 MB. Upload a smaller one.');
+      const message =
+        'That photo is over 5 MB. Try a smaller one.';
+      if (target === 'cart') {
+        setCartRxError(message);
+      } else {
+        setUploadError(message);
+      }
       return;
     }
 
-    setUploadError(null);
-    setPrescriptionFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
-  }, []);
+    if (target === 'cart') {
+      setCartRxError(null);
+      setCartRxFile(file);
+      setCartRxPreview(URL.createObjectURL(file));
+    } else {
+      setUploadError(null);
+      setPrescriptionFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+    }
+  };
 
-  const clearPrescription = useCallback(() => {
+  const clearStandalonePrescription = useCallback(() => {
     setPrescriptionFile(null);
     setPreviewUrl(null);
     setUploadError(null);
+    prescriptionKeyRef.current = null;
   }, []);
 
-  const handlePrescriptionSubmit = useCallback(async () => {
-    if (!selectedBranch) return;
+  const clearCartPrescription = useCallback(() => {
+    setCartRxFile(null);
+    setCartRxPreview(null);
+    setCartRxError(null);
+    checkoutKeyRef.current = null;
+  }, []);
 
-    const errors = validateAddress(address, false);
-    setAddressErrors(errors);
-    if (Object.keys(errors).length > 0) {
-      notify('Please check the highlighted delivery details.', 'error');
+  const handleCheckout = useCallback(async () => {
+    if (
+      submitting ||
+      !selectedBranch ||
+      cart.length === 0
+    ) {
       return;
     }
-    if (!prescriptionFile) {
-      setUploadError('Please add a photo of the prescription first.');
+
+    const errors = validateAddress(address, true);
+    setAddressErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      notify('Some delivery details are missing.', 'error');
+      focusFirstError(errors);
+      return;
+    }
+
+    if (cartNeedsPrescription && !cartRxFile) {
+      setCartRxError(
+        'A prescription is required for one or more medicines in this basket.',
+      );
+      notify('Attach the required prescription first.', 'error');
       return;
     }
 
     setSubmitting(true);
+
+    let prescriptionToken = '';
+
     try {
-      const body = new FormData();
-      body.append('image', prescriptionFile);
-      const uploaded = await api<{ url: string; publicId: string }>('/api/uploads/prescription', {
+      if (cartNeedsPrescription && cartRxFile) {
+        prescriptionToken =
+          await uploadPrescriptionFile(cartRxFile);
+      }
+
+      if (!checkoutKeyRef.current) {
+        checkoutKeyRef.current = uuid();
+      }
+
+      const data = await api<{
+        order: {
+          id: string;
+          orderNumber: string;
+          estimatedTotal: number;
+          items: OrderItemRecord[];
+          branch: {
+            id: string;
+            name: string;
+            shortName?: string;
+            phone: string;
+          };
+        };
+      }>('/api/orders', {
         method: 'POST',
-        body,
+        headers: {
+          'Idempotency-Key': checkoutKeyRef.current,
+        },
+        body: JSON.stringify({
+          type: 'cart',
+          branchId: selectedBranch._id,
+          customer: address,
+          items: cart.map((item) => ({
+            medicineId: item.medicineId,
+            buyType: item.buyType,
+            qty: item.qty,
+          })),
+          prescriptionToken,
+        }),
       });
 
-      const data = await api<{ order: { orderNumber: string } }>('/api/orders', {
+      setCart([]);
+      setIsCartOpen(false);
+      clearCartPrescription();
+      checkoutKeyRef.current = null;
+
+      notify(
+        `Order ${data.order.orderNumber} created successfully. You will receive a WhatsApp confirmation shortly.`,
+      );
+    } catch (error) {
+      if (prescriptionToken) {
+        await revertPrescription(prescriptionToken);
+      }
+
+      notify(
+        errorText(error, 'The order could not be placed.'),
+        'error',
+      );
+
+      if (error instanceof ApiError && error.details) {
+        setAddressErrors(error.details);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    address,
+    cart,
+    cartNeedsPrescription,
+    cartRxFile,
+    clearCartPrescription,
+    focusFirstError,
+    notify,
+    selectedBranch,
+    submitting,
+  ]);
+
+  const handlePrescriptionSubmit = useCallback(async () => {
+    if (submitting || !selectedBranch) return;
+
+    const errors = validateAddress(address, false);
+    setAddressErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      notify('Some delivery details are missing.', 'error');
+      focusFirstError(errors);
+      return;
+    }
+
+    if (!prescriptionFile) {
+      setUploadError('Add a photo of the prescription first.');
+      return;
+    }
+
+    setSubmitting(true);
+
+    let prescriptionToken = '';
+
+    try {
+      prescriptionToken =
+        await uploadPrescriptionFile(prescriptionFile);
+
+      if (!prescriptionKeyRef.current) {
+        prescriptionKeyRef.current = uuid();
+      }
+
+      const data = await api<{
+        order: {
+          id: string;
+          orderNumber: string;
+          branch: {
+            id: string;
+            name: string;
+            shortName?: string;
+            phone: string;
+          };
+        };
+      }>('/api/orders', {
         method: 'POST',
+        headers: {
+          'Idempotency-Key':
+            prescriptionKeyRef.current,
+        },
         body: JSON.stringify({
           type: 'prescription',
           branchId: selectedBranch._id,
           customer: address,
-          prescriptionUrl: uploaded.url,
-          prescriptionPublicId: uploaded.publicId,
+          prescriptionToken,
         }),
       });
 
-      const message = [
-        `Prescription order ${data.order.orderNumber} — ${selectedBranch.name}`,
-        '',
-        `Name: ${sanitizeForMessage(address.name)}`,
-        `Phone: ${digitsOnly(address.phone)}`,
-        `Address: ${sanitizeForMessage(address.houseNo)}`,
-        '',
-        `Prescription: ${uploaded.url}`,
-        '',
-        'Please check the prescription and send the total bill.',
-      ].join('\n');
-
-      openWhatsApp(selectedBranch.phone, message);
       setIsPrescriptionOpen(false);
-      clearPrescription();
-      notify(`Prescription order ${data.order.orderNumber} placed securely!`);
+      clearStandalonePrescription();
+      prescriptionKeyRef.current = null;
+
+      notify(
+        `Prescription order ${data.order.orderNumber} created successfully. You will receive a WhatsApp confirmation shortly.`,
+      );
     } catch (error) {
-      notify(error instanceof ApiError ? error.message : 'Could not send the prescription.', 'error');
+      if (prescriptionToken) {
+        await revertPrescription(prescriptionToken);
+      }
+
+      notify(
+        errorText(
+          error,
+          'The prescription order could not be created.',
+        ),
+        'error',
+      );
+
+      if (error instanceof ApiError && error.details) {
+        setAddressErrors(error.details);
+      }
     } finally {
       setSubmitting(false);
     }
-  }, [address, clearPrescription, notify, openWhatsApp, prescriptionFile, selectedBranch]);
-
-  /* ---------------- Auth actions ---------------- */
+  }, [
+    address,
+    clearStandalonePrescription,
+    focusFirstError,
+    notify,
+    prescriptionFile,
+    selectedBranch,
+    submitting,
+  ]);
 
   const handleLogout = useCallback(async () => {
     try {
-      await api('/api/auth/logout', { method: 'POST' });
-    } catch {}
-    localStorage.removeItem(TOKEN_KEY);
+      await api('/api/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+    } catch {
+      // Local session state still resets.
+    }
+
     setUser(null);
     setView('store');
-    notify('Successfully signed out.');
+    setShowAccount(false);
+    notify('Signed out.');
   }, [notify]);
 
-  /* ---------------- Render ---------------- */
+  const styleNode = (
+    <style dangerouslySetInnerHTML={{ __html: GLOBAL_CSS }} />
+  );
 
   const toastNode = (
-    <div className="pointer-events-none fixed inset-x-0 top-6 z-[90] flex justify-center px-4" aria-live="polite">
-      {toast && (
+    <div
+      className="pointer-events-none fixed inset-x-0 top-4 z-[100] flex flex-col items-center gap-2 px-4"
+      aria-live="polite"
+    >
+      {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`animate-pop flex items-center gap-3 rounded-full px-5 py-3 text-sm font-bold text-white shadow-lg backdrop-blur-md ${
-            toast.tone === 'error' ? 'bg-rose-600/95 ring-1 ring-rose-500/50' : 'bg-gray-900/95 ring-1 ring-gray-700'
-          }`}
+          className={cx(
+            'lp-toast flex max-w-[92vw] items-center gap-2.5 rounded-full px-5 py-3 text-[14px] font-medium text-white shadow-[0_18px_40px_-18px_rgba(7,17,15,0.8)] backdrop-blur-xl',
+            toast.tone === 'error'
+              ? 'bg-rose-600/95'
+              : 'bg-[#0B1220]/95',
+          )}
         >
           {toast.tone === 'error' ? (
-            <AlertCircle size={18} strokeWidth={2.5} className="shrink-0" aria-hidden="true" />
+            <AlertCircle size={17} className="shrink-0" />
           ) : (
-            <CheckCircle2 size={18} strokeWidth={2.5} className="shrink-0 text-emerald-400" aria-hidden="true" />
+            <CheckCircle2
+              size={17}
+              className="shrink-0 text-[#5FE3C6]"
+            />
           )}
           {toast.text}
         </div>
-      )}
+      ))}
     </div>
-  );
-
-  const styleNode = (
-    <style
-      dangerouslySetInnerHTML={{
-        __html: `
-      .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
-      .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
-      .no-scrollbar::-webkit-scrollbar { display: none; }
-
-      @keyframes popSpring { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
-      @keyframes wobbleError { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
-
-      .animate-pop { animation: popSpring 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) both; }
-      .animate-wobble { animation: wobbleError 0.4s ease-in-out; }
-
-      :focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; border-radius: 8px; }
-      html { scroll-behavior: smooth; }
-
-      @media (prefers-reduced-motion: reduce) {
-        *, *::before, *::after {
-          animation-duration: 0.01ms !important;
-          animation-iteration-count: 1 !important;
-          transition-duration: 0.01ms !important;
-          scroll-behavior: auto !important;
-        }
-      }
-    `,
-      }}
-    />
   );
 
   if (view === 'admin' && user?.role === 'admin') {
     return (
-      <>
+      <div className="lp-shell">
+        {styleNode}
         {toastNode}
+
         <AdminPanel
           user={user}
           branches={branches}
-          onBranchesChange={setBranches}
+          onBranchesChange={(next) => {
+            setBranches(next);
+            setSelectedBranch((prev) => {
+              if (
+                prev &&
+                next.some(
+                  (branch) =>
+                    branch._id === prev._id && branch.isActive,
+                )
+              ) {
+                return next.find(
+                  (branch) => branch._id === prev._id,
+                )!;
+              }
+
+              return (
+                next.find((branch) => branch.isActive) ?? null
+              );
+            });
+          }}
           onBackToStore={() => setView('store')}
           onLogout={handleLogout}
           notify={notify}
         />
-        {styleNode}
-      </>
+      </div>
     );
   }
 
   const branchPicker = (
     <BranchPicker
-      branches={branches}
+      branches={activeBranches}
       selected={selectedBranch}
       distance={detectedDistance}
       status={locateStatus}
       errorMessage={locateError}
+      loading={branchesLoading}
+      branchError={branchesError}
       onDetect={detectNearestBranch}
       onSelect={selectBranch}
     />
   );
 
+  const branchCount = activeBranches.length;
+  const selectedBranchLabel =
+    selectedBranch?.shortName || selectedBranch?.name;
+
   return (
-    <div className="min-h-screen bg-[#F8F9FA] font-sans text-gray-900 antialiased selection:bg-indigo-200 selection:text-indigo-900">
+    <div className="lp-shell min-h-screen bg-[#F2F3F5] text-[#0B1220] antialiased selection:bg-[#0B7A6B]/20">
+      {styleNode}
       {toastNode}
 
-      <div className="bg-gray-900 px-4 py-2 text-center text-xs font-bold tracking-wide text-white">
-        <span className="inline-flex items-center gap-2">
-          <Clock size={14} strokeWidth={2.5} aria-hidden="true" /> Open 24/7 · Fast delivery in the area
+      <div className="bg-[#0B7A6B] px-4 py-2 text-center text-[12px] font-medium tracking-wide text-white sm:text-[13px]">
+        <span className="inline-flex items-center justify-center gap-2">
+          <Sparkles size={14} className="text-white/80" />
+          {branchCount > 0
+            ? `${branchCount} active branch${branchCount === 1 ? '' : 'es'} accepting orders`
+            : 'Branch availability is being updated'}
         </span>
       </div>
 
-      <div className="sticky top-0 z-40 border-b border-gray-200/80 bg-white/80 backdrop-blur-xl shadow-sm">
-        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-4">
-            <a href="#top" className="shrink-0 leading-none group">
-              <span className="block text-2xl font-black tracking-tight text-gray-900 group-hover:text-indigo-600 transition-colors sm:text-3xl">Lotus Pharmacy</span>
-              <span className="mt-1 block text-[10px] font-bold uppercase tracking-widest text-gray-400">Premium Healthcare</span>
+      <header className="sticky top-0 z-40 border-b border-[#0B1220]/[0.08] bg-[#F2F3F5]/85 shadow-sm backdrop-blur-2xl">
+        <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3 sm:gap-5">
+            <a
+              href="#top"
+              className="flex shrink-0 items-center gap-2.5"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#0B7A6B] text-white shadow-[0_8px_20px_-10px_rgba(11,122,107,0.9)]">
+                <LotusMark />
+              </span>
+              <span className="hidden text-[19px] font-semibold tracking-[-0.03em] sm:block">
+                Lotus Pharmacy
+              </span>
             </a>
 
-            <div className="ml-auto hidden flex-1 max-w-lg lg:block">
-              <SearchInput value={searchQuery} onChange={setSearchQuery} />
+            <div className="hidden flex-1 lg:block">
+              <SearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                busy={
+                  searchQuery.trim() !== debouncedQuery
+                }
+              />
             </div>
 
-            <div className="ml-auto flex items-center gap-2 md:ml-0">
+            <div className="ml-auto flex items-center gap-2">
+              {sessionChecked && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    user
+                      ? setShowAccount(true)
+                      : setShowAuth(true)
+                  }
+                  className="lp-press flex h-11 items-center gap-2 rounded-full bg-[#0B1220]/[0.06] px-3 text-[13px] font-semibold sm:px-4"
+                >
+                  {user ? (
+                    <>
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E6F4F1] text-[11px] text-[#0B7A6B]">
+                        {initialsOf(user.name)}
+                      </span>
+                      <span className="hidden sm:inline">
+                        {user.name.split(' ')[0]}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <LogIn size={16} />
+                      <span className="hidden sm:inline">
+                        Sign in
+                      </span>
+                    </>
+                  )}
+                </button>
+              )}
+
               {user?.role === 'admin' && (
                 <button
                   type="button"
                   onClick={() => setView('admin')}
-                  className="hidden items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 sm:flex"
+                  className="lp-press hidden items-center gap-2 rounded-full bg-[#0B1220]/[0.06] px-4 py-2.5 text-[13px] font-semibold md:flex"
                 >
-                  <LayoutDashboard size={18} strokeWidth={2.5} /> Admin
+                  <LayoutDashboard size={16} />
+                  Console
                 </button>
               )}
-
-              {sessionChecked &&
-                (user ? (
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-                    >
-                      <UserIcon size={18} strokeWidth={2.5} aria-hidden="true" />
-                      <span className="hidden max-w-[8rem] truncate sm:inline">{user.name.split(' ')[0]}</span>
-                    </button>
-                    <div className="invisible absolute right-0 top-full z-50 mt-1 w-48 rounded-2xl border border-gray-200 bg-white p-2 opacity-0 shadow-lg transition-all duration-300 group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 origin-top">
-                      {user.role === 'admin' && (
-                        <button
-                          type="button"
-                          onClick={() => setView('admin')}
-                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 sm:hidden"
-                        >
-                          <LayoutDashboard size={16} /> Admin panel
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={handleLogout}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-bold text-gray-700 hover:bg-rose-50 hover:text-rose-700 transition-colors"
-                      >
-                        <LogOut size={16} /> Sign out
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setShowAuth(true)}
-                    className="rounded-xl px-4 py-2 text-sm font-bold text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-                  >
-                    Sign in
-                  </button>
-                ))}
 
               <button
                 type="button"
                 onClick={() => setIsCartOpen(true)}
-                aria-label={`Open cart, ${itemCount} item${itemCount === 1 ? '' : 's'}`}
-                className="relative flex items-center gap-2 rounded-xl bg-gray-900 px-3 py-2 text-white transition-all hover:bg-indigo-600 active:scale-95"
+                aria-label={`Open cart, ${itemCount} items`}
+                className="lp-press relative flex h-11 w-11 items-center justify-center rounded-full bg-[#0B1220] text-white hover:bg-[#0B7A6B]"
               >
-                <ShoppingCart size={20} strokeWidth={2.5} aria-hidden="true" />
+                <ShoppingCart size={19} />
                 {itemCount > 0 && (
-                  <span
-                    key={itemCount}
-                    className="animate-pop absolute -right-1 -top-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white tabular-nums shadow-sm border-2 border-white"
-                  >
+                  <span className="lp-pop absolute -right-0.5 -top-0.5 flex h-[22px] min-w-[22px] items-center justify-center rounded-full border-2 border-[#F2F3F5] bg-[#0B7A6B] px-1 text-[11px] font-semibold tabular-nums">
                     {itemCount}
                   </span>
                 )}
@@ -2441,526 +5621,658 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="mt-4 lg:hidden">
-            <SearchInput value={searchQuery} onChange={setSearchQuery} />
+          <div className="mt-3 lg:hidden">
+            <SearchInput
+              value={searchQuery}
+              onChange={setSearchQuery}
+              busy={searchQuery.trim() !== debouncedQuery}
+            />
           </div>
         </div>
 
-        <div className="border-t border-gray-100/50">
-          <div className="mx-auto max-w-7xl px-4 py-2.5 sm:px-6 lg:px-8">
-            <div className="no-scrollbar flex gap-2 overflow-x-auto scroll-smooth">
-              {categories.map((category) => {
-                const active = activeCategory === category;
-                return (
-                  <button
-                    key={category}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setActiveCategory(category)}
-                    className={`whitespace-nowrap rounded-lg px-4 py-1.5 text-sm font-bold transition-all ${
-                      active
-                        ? 'bg-gray-900 text-white shadow-sm'
-                        : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
-                    }`}
-                  >
-                    {category}
-                  </button>
-                );
-              })}
+        {categories.length > 1 && (
+          <div className="lp-fade-x mx-auto max-w-7xl overflow-hidden px-4 pb-2.5 sm:px-6 lg:px-8">
+            <div className="no-scrollbar flex gap-2 overflow-x-auto">
+              {categories.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => setActiveCategory(category)}
+                  className={cx(
+                    'lp-press whitespace-nowrap rounded-full px-4 py-2 text-[13px] font-medium',
+                    activeCategory === category
+                      ? 'bg-[#0B1220] text-white'
+                      : 'bg-[#0B1220]/[0.05] text-[#0B1220]/65',
+                  )}
+                >
+                  {category}
+                </button>
+              ))}
             </div>
           </div>
-        </div>
-      </div>
+        )}
+      </header>
 
-      <section id="top" className="relative overflow-hidden bg-gray-900 pt-16 pb-24 sm:pt-20 sm:pb-32 lg:pb-36 border-b border-gray-800">
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-           <div className="absolute -top-1/2 -right-1/4 w-[1000px] h-[1000px] rounded-full bg-indigo-500/10 blur-[100px] opacity-70"></div>
-           <div className="absolute -bottom-1/2 -left-1/4 w-[800px] h-[800px] rounded-full bg-emerald-500/10 blur-[100px] opacity-70"></div>
+      <section
+        id="top"
+        className="relative overflow-hidden bg-[#07110F] pb-24 pt-16 sm:pb-28 sm:pt-20"
+      >
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="lp-drift absolute -right-32 -top-40 h-[620px] w-[620px] rounded-full bg-[#0B7A6B]/40 blur-[130px]" />
+          <div className="lp-grain absolute inset-0 opacity-[0.045] mix-blend-overlay" />
         </div>
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col items-center text-center">
-          <h1 className="max-w-[20ch] text-4xl font-black leading-tight tracking-tighter text-white sm:text-5xl lg:text-7xl">
-            Upload your prescription. <span className="text-indigo-400 block sm:inline">We handle the rest.</span>
-          </h1>
-          <p className="mt-6 max-w-[60ch] text-base font-medium leading-relaxed text-gray-400 sm:text-lg">
-            Photograph your prescription, add your address, and our automated system routes it to the closest branch. A qualified pharmacist confirms your bill instantly.
-          </p>
-          <div className="mt-10 flex flex-col gap-4 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => setIsPrescriptionOpen(true)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-8 py-4 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-500 hover:-translate-y-0.5 active:scale-95"
-            >
-              <UploadCloud size={20} strokeWidth={2.5} aria-hidden="true" /> Upload Prescription
-            </button>
-            {selectedBranch && (
-              <a
-                href={`tel:+${selectedBranch.phone}`}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-800/50 backdrop-blur-sm px-8 py-4 text-sm font-bold text-white transition-all hover:border-gray-500 hover:bg-gray-700 active:scale-95"
+
+        <div className="relative mx-auto grid max-w-7xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
+          <div>
+            <h1 className="max-w-[16ch] text-[38px] font-semibold leading-[1.05] tracking-[-0.04em] text-white sm:text-[52px] lg:text-[60px]">
+              Your chemist, one photo away.
+            </h1>
+
+            <p className="mt-5 max-w-[54ch] text-[16px] leading-relaxed text-white/60 sm:text-[17px]">
+              Build a basket or send a prescription. Choose a branch
+              yourself or share your location to find the nearest active
+              counter. Confirmation and delivery updates arrive on WhatsApp;
+              stock and the final bill are confirmed before fulfilment.
+            </p>
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setIsPrescriptionOpen(true)}
+                className="lp-press inline-flex items-center justify-center gap-2.5 rounded-full bg-white px-7 py-4 text-[15px] font-semibold text-[#07110F] hover:bg-[#E6F4F1]"
               >
-                <PhoneCall size={18} strokeWidth={2.5} aria-hidden="true" /> Call {selectedBranch.shortName}
-              </a>
-            )}
+                <Camera size={18} />
+                Send a prescription
+              </button>
+
+              {selectedBranch && (
+                <a
+                  href={`tel:+${digitsOnly(
+                    selectedBranch.phone,
+                  )}`}
+                  className="lp-press inline-flex items-center justify-center gap-2.5 rounded-full border border-white/[0.15] bg-white/5 px-7 py-4 text-[15px] font-semibold text-white backdrop-blur-md hover:bg-white/10"
+                >
+                  <PhoneCall size={17} />
+                  Call {selectedBranchLabel}
+                </a>
+              )}
+            </div>
+          </div>
+
+          <div className="mx-auto w-full max-w-sm">
+            <div className="rounded-[32px] border border-white/10 bg-white/[0.07] p-5 backdrop-blur-2xl">
+              <p className="text-[13px] text-white/50">
+                Selected fulfilment
+              </p>
+
+              <div className="mt-4 rounded-[24px] bg-white/[0.06] p-4">
+                <p className="text-[15px] font-semibold text-white">
+                  {selectedBranch
+                    ? selectedBranchLabel
+                    : 'Choose a branch to start'}
+                </p>
+
+                <p className="mt-1 text-[12.5px] leading-relaxed text-white/45">
+                  {detectedDistance !== null && selectedBranch
+                    ? `${detectedDistance.toFixed(1)} km straight-line · ${selectedBranch.serviceRadiusKm} km service radius`
+                    : selectedBranch
+                      ? selectedBranch.address
+                      : 'Location is never required; manual branch selection always works.'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={detectNearestBranch}
+                disabled={
+                  locateStatus === 'loading' ||
+                  activeBranches.length === 0
+                }
+                className="lp-press mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0B7A6B] py-3 text-[13px] font-semibold text-white disabled:opacity-50"
+              >
+                {locateStatus === 'loading' ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Navigation size={15} />
+                )}
+                Find nearest branch
+              </button>
+            </div>
           </div>
         </div>
       </section>
 
-      <main className="mx-auto max-w-7xl px-4 pb-28 pt-12 sm:px-6 lg:px-8 lg:pb-20">
-        <div className="mb-8 flex items-baseline justify-between gap-4 border-b border-gray-200/80 pb-5">
-          <h2 className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">
-            {activeCategory === 'All' ? 'Everyday Medicines' : activeCategory}
+      <main className="mx-auto max-w-7xl px-4 pb-28 pt-10 sm:px-6 lg:px-8">
+        <div className="mb-6 flex items-baseline justify-between gap-4">
+          <h2 className="text-[24px] font-semibold tracking-[-0.03em] sm:text-[28px]">
+            {activeCategory === ALL_CATEGORIES
+              ? debouncedQuery
+                ? `Results for “${debouncedQuery}”`
+                : selectedBranch
+                  ? `Available at ${selectedBranchLabel}`
+                  : 'Everyday medicines'
+              : activeCategory}
           </h2>
-          <span className="rounded bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600 tabular-nums border border-gray-200">
-            {medicines.length} item{medicines.length === 1 ? '' : 's'}
-          </span>
+
+          {medicines.length > 0 && (
+            <span className="shrink-0 rounded-full border border-[#0B1220]/10 bg-white px-3 py-1.5 text-[12px] font-semibold tabular-nums text-[#0B1220]/60 shadow-sm">
+              {medicines.length} shown
+            </span>
+          )}
         </div>
 
+        {branchesError && (
+          <div className="mb-5 flex items-center justify-between gap-4 rounded-[24px] bg-rose-50 p-4 text-[13px] font-medium text-rose-700">
+            <span>{branchesError}</span>
+            <button
+              type="button"
+              onClick={loadBranches}
+              className="shrink-0 font-semibold underline"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {catalogueLoading && medicines.length === 0 ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:gap-6 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:gap-4 lg:grid-cols-4 xl:grid-cols-5">
             {Array.from({ length: 10 }).map((_, index) => (
-              <div key={index} className="h-[280px] animate-pulse rounded-2xl bg-gray-200/50" />
+              <div
+                key={index}
+                className="lp-skeleton h-[300px] rounded-[26px]"
+              />
             ))}
           </div>
         ) : catalogueError ? (
-          <div className="rounded-3xl border border-gray-200 bg-white py-20 text-center shadow-sm">
-            <AlertCircle size={48} strokeWidth={2} className="mx-auto mb-4 text-rose-500" aria-hidden="true" />
-            <p className="text-lg font-black text-gray-900">{catalogueError}</p>
+          <div className="rounded-[32px] bg-white py-20 text-center">
+            <AlertCircle
+              size={40}
+              className="mx-auto mb-4 text-rose-500"
+            />
+            <p className="text-[17px] font-semibold">
+              {catalogueError}
+            </p>
             <button
               type="button"
-              onClick={() => loadCatalogue(true)}
-              className="mt-6 rounded-xl bg-gray-900 px-6 py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-gray-800 active:scale-95"
+              onClick={() => loadMedicines('reset')}
+              className="lp-press mt-6 rounded-full bg-[#0B1220] px-6 py-3 text-[14px] font-semibold text-white"
             >
-              Try Again
+              Try again
             </button>
           </div>
         ) : medicines.length > 0 ? (
           <>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:gap-6 lg:grid-cols-4 xl:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:gap-4 lg:grid-cols-4 xl:grid-cols-5">
               {medicines.map((medicine, index) => (
                 <ProductCard
                   key={medicine._id}
-                  index={index}
                   medicine={medicine}
+                  index={index}
+                  selectedBranchId={selectedBranch?._id}
                   cartQuantities={cartQuantities}
                   onAdd={addToCart}
                   onUpdateQty={updateQty}
                 />
               ))}
             </div>
-            {hasMoreStoreMedicines && (
-              <div className="mt-12 flex justify-center">
+
+            <div ref={sentinelRef} className="h-px" />
+
+            {hasMore && (
+              <div className="mt-10 flex justify-center">
                 <button
-                  onClick={() => loadCatalogue(false)}
-                  disabled={catalogueLoading}
-                  className="rounded-xl border border-gray-200 bg-white px-8 py-3.5 text-sm font-bold text-gray-700 shadow-sm transition-all hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50 active:scale-95"
+                  type="button"
+                  onClick={() => loadMedicines('more')}
+                  disabled={loadingMore}
+                  className="lp-press flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-[14px] font-semibold"
                 >
-                  {catalogueLoading ? <Loader2 size={18} className="inline animate-spin mr-2" /> : null}
-                  {catalogueLoading ? 'Loading more...' : 'Load More Medicines'}
+                  {loadingMore && (
+                    <Loader2
+                      size={16}
+                      className="animate-spin text-[#0B7A6B]"
+                    />
+                  )}
+                  {loadingMore ? 'Loading' : 'Show more'}
                 </button>
               </div>
             )}
           </>
         ) : (
-          <div className="rounded-3xl border border-gray-200 bg-white py-24 text-center shadow-sm">
-            <Search size={48} strokeWidth={1.5} className="mx-auto mb-5 text-gray-300" aria-hidden="true" />
-            <p className="text-lg font-black text-gray-900">Nothing matches your search.</p>
-            <p className="mx-auto mt-2 max-w-[40ch] text-sm font-medium text-gray-500">
-              Try a different keyword, or upload your prescription and we will look it up.
+          <div className="rounded-[32px] bg-white py-20 text-center">
+            <Search
+              size={40}
+              className="mx-auto mb-4 text-[#0B1220]/25"
+            />
+            <p className="text-[17px] font-semibold">
+              Nothing available for this selection
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setActiveCategory('All');
-              }}
-              className="mt-8 rounded-xl border border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-700 transition-all hover:bg-gray-50 hover:border-gray-300 active:scale-95"
-            >
-              Clear Filters
-            </button>
+            <p className="mx-auto mt-2 max-w-[44ch] text-[14px] text-[#0B1220]/55">
+              Try another branch, clear the filters, or send a prescription
+              for pharmacist review.
+            </p>
           </div>
         )}
       </main>
-
-      <section className="border-t border-gray-200/80 bg-white py-20 lg:py-28">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-black tracking-tight text-gray-900 sm:text-4xl text-center mb-16">
-            The Industry Standard for Pharmacy Delivery.
-          </h2>
-          <div className="grid gap-8 md:grid-cols-3">
-            {[
-              {
-                icon: Shield,
-                title: 'Authenticity Guaranteed',
-                body: 'All stock is sourced directly from authorized distributors. Cold-chain items are monitored. Batch and expiry are clearly documented.',
-              },
-              {
-                icon: Navigation,
-                title: 'Smart Order Routing',
-                body: 'Our system automatically detects your location and routes the order to the closest active branch, guaranteeing minimal delivery time.',
-              },
-              {
-                icon: Award,
-                title: 'Certified Pharmacists',
-                body: 'Speak directly to qualified professionals regarding dosage, interactions, or substitutes before your order is dispatched.',
-              },
-            ].map(({ icon: Icon, title, body }, i) => (
-              <article key={title} className="group rounded-3xl border border-gray-200 bg-gray-50/50 p-8 transition-all hover:bg-white hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5">
-                <span className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100 transition-transform group-hover:scale-110">
-                  <Icon size={24} strokeWidth={2} aria-hidden="true" />
-                </span>
-                <h3 className="mb-3 text-lg font-black tracking-tight text-gray-900">{title}</h3>
-                <p className="text-sm font-medium leading-relaxed text-gray-600">{body}</p>
-              </article>
-            ))}
-          </div>
+{activeBranches.length > 0 && view === 'store' && (
+        <StoreMap branches={activeBranches} />
+      )}
+      <section className="bg-white py-16 lg:py-20">
+        <div className="mx-auto grid max-w-7xl gap-10 px-4 sm:px-6 md:grid-cols-3 lg:px-8">
+          {[
+            {
+              icon: Shield,
+              title: 'Prescription-aware checkout',
+              body: 'Medicines marked as prescription-required cannot pass checkout without a prescription attachment.',
+            },
+            {
+              icon: Navigation,
+              title: 'Branch-aware stock',
+              body: 'The catalogue is filtered to the selected active branch and stock is revalidated by the server at checkout.',
+            },
+            {
+              icon: Award,
+              title: 'Pharmacist confirmation',
+              body: 'The basket is an estimate until staff confirms availability and the final bill.',
+            },
+          ].map(({ icon: Icon, title, body }) => (
+            <article key={title}>
+              <Icon
+                size={22}
+                className="mb-4 text-[#0B7A6B]"
+              />
+              <h3 className="text-[17px] font-semibold">{title}</h3>
+              <p className="mt-2 text-[14.5px] leading-relaxed text-[#0B1220]/60">
+                {body}
+              </p>
+            </article>
+          ))}
         </div>
       </section>
 
-      <footer className="border-t border-gray-800 bg-gray-950 pb-28 pt-20 text-gray-400 lg:pb-16">
+      <footer className="bg-[#07110F] pb-[calc(7rem+env(safe-area-inset-bottom))] pt-16 text-white/60 lg:pb-16">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-8 border-b border-gray-800 pb-12 md:flex-row md:items-end md:justify-between">
+          <div className="flex flex-col gap-8 border-b border-white/10 pb-10 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-3xl font-black tracking-tight text-white">Lotus Pharmacy</p>
-              <p className="mt-3 max-w-[46ch] text-sm font-medium leading-relaxed text-gray-400">
-                Premium healthcare delivery platform serving the community round the clock.
+              <p className="flex items-center gap-2.5 text-[24px] font-semibold text-white">
+                <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#0B7A6B]">
+                  <LotusMark />
+                </span>
+                Lotus Pharmacy
+              </p>
+              <p className="mt-3 text-[14.5px]">
+                Choose from the branches currently accepting orders.
               </p>
             </div>
-            {branches[0] && (
+
+            {selectedBranch && (
               <a
-                href={`tel:+${branches[0].phone}`}
-                className="inline-flex items-center gap-4 rounded-2xl border border-gray-800 bg-gray-900 p-4 transition-colors hover:border-indigo-500/50 hover:bg-gray-800"
+                href={`tel:+${digitsOnly(
+                  selectedBranch.phone,
+                )}`}
+                className="lp-press inline-flex items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.05] p-4"
               >
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400">
-                  <Phone size={22} strokeWidth={2.5} aria-hidden="true" />
-                </div>
-                <div>
-                  <span className="block text-xs font-bold uppercase tracking-wider text-gray-500">Call {branches[0].name}</span>
-                  <span className="block text-lg font-black text-white tabular-nums tracking-wide">+{branches[0].phone}</span>
-                </div>
+                <Phone size={20} className="text-white" />
+                <span>
+                  <span className="block text-[12.5px]">
+                    Call {selectedBranchLabel}
+                  </span>
+                  <span className="block text-[17px] font-semibold text-white">
+                    +{selectedBranch.phone}
+                  </span>
+                </span>
               </a>
             )}
           </div>
 
           <div className="grid gap-10 py-12 md:grid-cols-3">
-            {branches.map((branch) => (
-              <div key={branch._id} className="group">
-                <h3 className="mb-5 flex items-center gap-2.5 text-lg font-black text-white transition-colors group-hover:text-indigo-400">
-                  <Store size={20} strokeWidth={2.5} aria-hidden="true" /> {branch.name}
+            {activeBranches.map((branch) => (
+              <div key={branch._id}>
+                <h3 className="mb-4 flex items-center gap-2.5 text-[16px] font-semibold text-white">
+                  <Store size={18} />
+                  {branch.name}
                 </h3>
-                <ul className="space-y-4 text-sm font-medium text-gray-400">
+
+                <ul className="space-y-3 text-[14px]">
                   <li className="flex items-start gap-3">
-                    <MapPin className="mt-0.5 shrink-0 text-gray-500" size={18} strokeWidth={2.5} aria-hidden="true" />
-                    <span className="leading-relaxed">{branch.fullAddress}</span>
+                    <MapPin
+                      size={17}
+                      className="mt-0.5 shrink-0 text-white/35"
+                    />
+                    <span>{branch.fullAddress}</span>
                   </li>
                   <li className="flex items-center gap-3">
-                    <Clock className="shrink-0 text-gray-500" size={18} strokeWidth={2.5} aria-hidden="true" />
-                    <span>Open 24/7</span>
+                    <Clock
+                      size={17}
+                      className="text-white/35"
+                    />
+                    <span>
+                      {branch.open24h
+                        ? 'Open 24 hours'
+                        : 'Check branch hours before ordering'}
+                    </span>
+                  </li>
+                  <li className="flex items-center gap-3">
+                    <Navigation
+                      size={17}
+                      className="text-white/35"
+                    />
+                    <span>
+                      Service radius: {branch.serviceRadiusKm} km
+                    </span>
                   </li>
                 </ul>
               </div>
             ))}
           </div>
 
-          <p className="border-t border-gray-800 pt-8 text-center text-xs font-bold uppercase tracking-widest text-gray-600">
-            © {new Date().getFullYear()} Lotus Pharmacy Group. Prescription medicines require a valid prescription.
+          <p className="border-t border-white/10 pt-8 text-[12.5px] text-white/40">
+            © {new Date().getFullYear()} Lotus Pharmacy. Prescription
+            medicines are dispensed only after pharmacist review of a valid
+            prescription.
           </p>
         </div>
       </footer>
 
       {itemCount > 0 && !isCartOpen && (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200/80 bg-white/80 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] backdrop-blur-xl lg:hidden">
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] lg:hidden">
           <button
             type="button"
             onClick={() => setIsCartOpen(true)}
-            className="flex w-full items-center justify-between rounded-xl bg-gray-900 px-5 py-4 text-white shadow-lg transition-all hover:bg-gray-800 active:scale-[0.98]"
+            className="lp-press lp-rise pointer-events-auto flex w-full items-center justify-between rounded-full bg-[#0B1220]/95 px-6 py-4 text-white shadow-[0_20px_45px_-20px_rgba(7,17,15,0.9)] backdrop-blur-xl"
           >
-            <span className="text-sm font-bold tracking-wide">
-              {itemCount} item{itemCount === 1 ? '' : 's'} · {formatMoney(total)}
+            <span className="text-[14px] font-medium">
+              {itemCount} item{itemCount === 1 ? '' : 's'} ·{' '}
+              {formatMoney(total)}
             </span>
-            <span className="flex items-center gap-2 text-sm font-black uppercase tracking-wider">
-              Checkout <ArrowRight size={16} strokeWidth={3} />
+            <span className="flex items-center gap-1.5 text-[14px] font-semibold text-[#5FE3C6]">
+              Review order
+              <ArrowRight size={16} />
             </span>
           </button>
         </div>
       )}
 
-      {isCartOpen && (
-        <div className="fixed inset-0 z-[60] flex justify-end" role="dialog" aria-modal="true" aria-label="Your cart">
-          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm transition-opacity" onClick={closeCart} />
-
-          <div
-            ref={cartPanelRef}
-            tabIndex={-1}
-            className="relative flex h-full w-full max-w-md flex-col bg-white shadow-2xl outline-none"
-          >
-            <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-5">
-              <h2 className="flex items-center gap-2.5 text-lg font-black tracking-tight text-gray-900">
-                <ShoppingCart size={22} strokeWidth={2.5} className="text-indigo-600" aria-hidden="true" /> Your Cart
-                {itemCount > 0 && <span className="ml-1 rounded bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-600 tabular-nums">{itemCount}</span>}
-              </h2>
+      <Sheet
+        open={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        title="Your order"
+        description={
+          itemCount > 0
+            ? `${itemCount} item${itemCount === 1 ? '' : 's'} ready to review`
+            : undefined
+        }
+        icon={
+          <ShoppingCart
+            size={20}
+            className="text-[#0B7A6B]"
+          />
+        }
+        footer={
+          cart.length > 0 ? (
+            <>
               <button
                 type="button"
-                onClick={closeCart}
-                aria-label="Close cart"
-                className="rounded-full bg-gray-100 p-2 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-900"
+                onClick={handleCheckout}
+                disabled={
+                  submitting ||
+                  !selectedBranch ||
+                  (cartNeedsPrescription && !cartRxFile)
+                }
+                className="lp-press flex w-full items-center justify-center gap-2.5 rounded-2xl bg-[#0B7A6B] py-4 text-[15px] font-semibold text-white disabled:opacity-50"
               >
-                <X size={20} strokeWidth={2.5} />
+                {submitting ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Check size={18} strokeWidth={2.6} />
+                )}
+                Place order
               </button>
-            </header>
-
-            <div className="custom-scrollbar flex-1 overflow-y-auto p-5 pb-10 bg-gray-50/50">
-              {cart.length === 0 ? (
-                <div className="py-24 text-center">
-                  <ShoppingCart size={48} strokeWidth={1.5} className="mx-auto mb-5 text-gray-300" aria-hidden="true" />
-                  <p className="text-base font-black text-gray-900">Your cart is empty</p>
-                  <p className="mx-auto mt-2 max-w-[32ch] text-sm font-medium text-gray-500">
-                    Add medicines from the list, or send a prescription directly.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeCart();
-                      setIsPrescriptionOpen(true);
-                    }}
-                    className="mt-8 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-indigo-700 active:scale-95"
-                  >
-                    Upload Prescription
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  <ul className="space-y-4">
-                    {cart.map((item) => (
-                      <li key={item.cartItemId} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                        <div className="flex gap-4">
-                          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gray-50 text-2xl ring-1 ring-inset ring-gray-100">
-                            <ProductThumb medicine={{ emoji: item.emoji, imageUrl: item.imageUrl, name: item.name }} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm font-bold leading-snug tracking-tight text-gray-900">{item.name}</p>
-                              <button
-                                type="button"
-                                onClick={() => removeFromCart(item.cartItemId)}
-                                aria-label={`Remove ${item.name}`}
-                                className="shrink-0 rounded-full bg-gray-50 p-1.5 text-gray-400 transition-colors hover:bg-rose-50 hover:text-rose-600 active:scale-90"
-                              >
-                                <X size={15} strokeWidth={2.5} />
-                              </button>
-                            </div>
-                            <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                              {item.buyType === 'loose' ? 'Loose unit' : 'Full pack'} · {formatMoney(item.unitPrice)}
-                            </p>
-                            <div className="mt-3 flex items-center justify-between">
-                              <QuantityStepper
-                                qty={item.qty}
-                                label={item.name}
-                                onDecrease={() => updateQty(item.cartItemId, -1)}
-                                onIncrease={() => updateQty(item.cartItemId, 1)}
-                              />
-                              <span className="text-base font-black text-gray-900 tabular-nums">
-                                {formatMoney(item.unitPrice * item.qty)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-gray-600">Estimated Total</span>
-                      <span className="text-xl font-black text-gray-900 tabular-nums">{formatMoney(total)}</span>
-                    </div>
-                    {savings > 0 && (
-                      <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600 tabular-nums">
-                        <CheckCircle2 size={14} strokeWidth={2.5} /> You save {formatMoney(savings)}
-                      </p>
-                    )}
-                    <p className="mt-4 text-[11px] font-medium leading-relaxed text-gray-500 border-t border-gray-100 pt-4 uppercase tracking-wider">
-                      Pharmacist confirms final bill on WhatsApp.
-                    </p>
-                  </div>
-
-                  {!user && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        closeCart();
-                        setShowAuth(true);
+              <p className="mt-3.5 text-center text-[12px] text-[#0B1220]/45">
+                A confirmation is sent to your WhatsApp number, and again each
+                time the order status changes.
+              </p>
+            </>
+          ) : undefined
+        }
+      >
+        {cart.length === 0 ? (
+          <div className="py-20 text-center">
+            <ShoppingCart
+              size={40}
+              className="mx-auto mb-4 text-[#0B1220]/20"
+            />
+            <p className="text-[17px] font-semibold">
+              Nothing in the basket yet
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <ul className="space-y-2.5">
+              {cart.map((item) => (
+                <li
+                  key={item.cartItemId}
+                  className="flex gap-3.5 rounded-[24px] bg-[#0B1220]/[0.035] p-3.5"
+                >
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white text-2xl shadow-sm">
+                    <ProductThumb
+                      medicine={{
+                        emoji: item.emoji,
+                        imageUrl: item.imageUrl,
+                        name: item.name,
                       }}
-                      className="w-full rounded-2xl border-2 border-dashed border-gray-300 bg-white p-5 text-left text-sm font-medium text-gray-600 transition-colors hover:border-indigo-400 hover:bg-indigo-50/50"
-                    >
-                      <span className="font-bold text-indigo-700">Sign in</span> to save delivery details permanently, or continue as a guest below.
-                    </button>
-                  )}
+                    />
+                  </div>
 
-                  <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <h3 className="mb-4 text-sm font-black tracking-tight text-gray-900">Delivery Information</h3>
-                    <div className="space-y-4">
-                      <Field name="name" label="Full name" autoComplete="name" value={address.name} error={addressErrors.name} onChange={handleAddressChange} maxLength={60} />
-                      <Field
-                        name="phone"
-                        label="Mobile number"
-                        type="tel"
-                        inputMode="numeric"
-                        autoComplete="tel-national"
-                        value={address.phone}
-                        error={addressErrors.phone}
-                        onChange={handleAddressChange}
-                        maxLength={10}
-                      />
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field name="houseNo" label="House/Flat No" autoComplete="address-line1" value={address.houseNo} error={addressErrors.houseNo} onChange={handleAddressChange} maxLength={80} />
-                        <Field name="area" label="Area/Locality" autoComplete="address-level3" value={address.area} error={addressErrors.area} onChange={handleAddressChange} maxLength={80} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-[14.5px] font-semibold">
+                          {item.name}
+                        </p>
+                        {item.requiresPrescription && (
+                          <p className="mt-0.5 text-[11.5px] font-medium text-rose-600">
+                            Prescription required
+                          </p>
+                        )}
                       </div>
-                      <Field name="landmark" label="Landmark (Optional)" value={address.landmark} onChange={handleAddressChange} maxLength={80} />
-                    </div>
-                  </section>
 
-                  {branchPicker}
-                </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeFromCart(item.cartItemId)
+                        }
+                        className="lp-press shrink-0 rounded-full p-1.5 text-[#0B1220]/35 hover:bg-rose-50 hover:text-rose-600"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+
+                    <p className="mt-0.5 text-[12.5px] text-[#0B1220]/50">
+                      {item.buyType === 'loose'
+                        ? 'Single unit'
+                        : 'Full pack'}{' '}
+                      · {formatMoney(item.unitPrice)}
+                    </p>
+
+                    <div className="mt-2.5 flex items-center justify-between">
+                      <QuantityStepper
+                        qty={item.qty}
+                        label={item.name}
+                        onDecrease={() =>
+                          updateQty(item.cartItemId, -1)
+                        }
+                        onIncrease={() =>
+                          updateQty(item.cartItemId, 1)
+                        }
+                      />
+                      <span className="text-[15px] font-semibold tabular-nums">
+                        {formatMoney(
+                          item.unitPrice * item.qty,
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div className="rounded-[26px] bg-[#E6F4F1] p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-[14px] text-[#0B1220]/65">
+                  Basket estimate
+                </span>
+                <span className="text-[22px] font-semibold tabular-nums">
+                  {formatMoney(total)}
+                </span>
+              </div>
+
+              {savings > 0 && (
+                <p className="mt-1.5 text-[13px] font-medium text-[#0B7A6B]">
+                  You save {formatMoney(savings)} against MRP
+                </p>
               )}
+
+              <p className="mt-3 border-t border-[#0B7A6B]/[0.15] pt-3 text-[12.5px] leading-relaxed text-[#0B1220]/55">
+                The server rechecks stock and current prices before creating
+                the order. No payment is taken here.
+              </p>
             </div>
 
-            {cart.length > 0 && (
-              <footer className="border-t border-gray-200 bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-lg">
-                <button
-                  type="button"
-                  onClick={handleCheckout}
-                  disabled={submitting || !selectedBranch}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] py-4 text-sm font-bold text-white shadow-md shadow-[#25D366]/20 transition-all hover:bg-[#20b858] disabled:opacity-60 disabled:shadow-none active:scale-[0.98]"
-                >
-                  {submitting ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} fill="currentColor" aria-hidden="true" />}
-                  Order via WhatsApp
-                </button>
-              </footer>
+            {cartNeedsPrescription && (
+              <section className="rounded-[26px] border border-rose-200 bg-rose-50/50 p-4">
+                <h3 className="mb-3 flex items-center gap-2 text-[14px] font-semibold text-rose-700">
+                  <FileText size={16} />
+                  Prescription required for this basket
+                </h3>
+
+                <PrescriptionFilePicker
+                  file={cartRxFile}
+                  previewUrl={cartRxPreview}
+                  error={cartRxError}
+                  onPick={(event) =>
+                    pickPrescription(event, 'cart')
+                  }
+                  onClear={clearCartPrescription}
+                  inputRef={cartRxInputRef}
+                />
+              </section>
             )}
-          </div>
-        </div>
-      )}
 
-      {isPrescriptionOpen && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Upload prescription">
-          <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity" onClick={closePrescription} />
-
-          <div
-            ref={prescriptionPanelRef}
-            tabIndex={-1}
-            className="relative flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-[32px] bg-gray-50 shadow-2xl outline-none sm:rounded-[32px] border border-white/20"
-          >
-            <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-5">
-              <h2 className="flex items-center gap-2.5 text-lg font-black tracking-tight text-gray-900">
-                <FileText size={20} strokeWidth={2.5} className="text-indigo-600" aria-hidden="true" /> Upload Prescription
-              </h2>
+            {!user && sessionChecked && (
               <button
                 type="button"
-                onClick={closePrescription}
-                aria-label="Close"
-                className="rounded-full bg-gray-100 p-2 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-900"
+                onClick={() => {
+                  setIsCartOpen(false);
+                  setShowAuth(true);
+                }}
+                className="w-full rounded-[24px] border border-dashed border-[#0B1220]/[0.15] p-4 text-left text-[13.5px] text-[#0B1220]/60"
               >
-                <X size={20} strokeWidth={2.5} />
+                <span className="font-semibold text-[#0B7A6B]">
+                  Sign in
+                </span>{' '}
+                to keep order history and saved delivery details, or continue
+                as a guest.
               </button>
-            </header>
+            )}
 
-            <div className="custom-scrollbar space-y-6 overflow-y-auto p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
-              <div>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`flex w-full flex-col items-center justify-center rounded-[24px] border-2 border-dashed p-8 text-center transition-all ${
-                    previewUrl ? 'border-indigo-400 bg-indigo-50/50' : 'border-gray-300 bg-white hover:border-indigo-400 hover:bg-indigo-50/30'
-                  }`}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-                    capture="environment"
-                    className="hidden"
-                    onChange={handleFileChange}
-                  />
-                  {previewUrl ? (
-                    <img src={previewUrl} alt="Prescription preview" className="max-h-48 rounded-xl object-contain shadow-sm border border-gray-200/50" />
-                  ) : (
-                    <>
-                      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-[20px] bg-gray-50 text-indigo-600 ring-1 ring-gray-200">
-                        <ImageIcon size={32} strokeWidth={2} aria-hidden="true" />
-                      </div>
-                      <span className="text-sm font-bold text-gray-900">Take or choose a photo</span>
-                      <span className="mt-2 max-w-[24ch] text-xs font-medium leading-relaxed text-gray-500">
-                        JPG, PNG or WEBP up to 5 MB. Make sure details are visible.
-                      </span>
-                    </>
-                  )}
-                </button>
+            <DeliveryFields
+              address={address}
+              errors={addressErrors}
+              onChange={handleAddressChange}
+              requireArea
+            />
 
-                {previewUrl && (
-                  <div className="mt-3 flex items-center justify-between text-xs font-bold rounded-xl bg-white p-3 border border-gray-200 shadow-sm">
-                    <span className="truncate text-gray-600">{prescriptionFile?.name}</span>
-                    <button type="button" onClick={clearPrescription} className="shrink-0 text-rose-600 hover:text-rose-700">
-                      Remove
-                    </button>
-                  </div>
-                )}
-
-                {uploadError && (
-                  <p className="mt-3 flex items-center gap-1.5 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700 border border-rose-100">
-                    <AlertCircle size={14} strokeWidth={2.5} aria-hidden="true" className="shrink-0" /> {uploadError}
-                  </p>
-                )}
-              </div>
-
-              <section className="space-y-4 rounded-[24px] border border-gray-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-black tracking-tight text-gray-900">Delivery Information</h3>
-                <Field name="name" label="Full name" autoComplete="name" value={address.name} error={addressErrors.name} onChange={handleAddressChange} maxLength={60} />
-                <Field
-                  name="phone"
-                  label="Mobile number"
-                  type="tel"
-                  inputMode="numeric"
-                  autoComplete="tel-national"
-                  value={address.phone}
-                  error={addressErrors.phone}
-                  onChange={handleAddressChange}
-                  maxLength={10}
-                />
-                <Field name="houseNo" label="Complete Address" autoComplete="street-address" value={address.houseNo} error={addressErrors.houseNo} onChange={handleAddressChange} maxLength={120} />
-              </section>
-
-              {branchPicker}
-
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={handlePrescriptionSubmit}
-                  disabled={submitting || !selectedBranch}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-4 text-sm font-bold text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:opacity-60 disabled:shadow-none active:scale-[0.98]"
-                >
-                  {submitting && <Loader2 size={18} className="animate-spin" />}
-                  Send Securely
-                </button>
-                <p className="mt-3 text-center text-[11px] font-bold uppercase tracking-wider text-gray-400">
-                  Image is encrypted & sent via WhatsApp
-                </p>
-              </div>
-            </div>
+            {branchPicker}
           </div>
-        </div>
-      )}
+        )}
+      </Sheet>
 
-      {showAuth && (
-        <AuthModal
-          onClose={() => setShowAuth(false)}
-          onAuthenticated={(authenticated) => {
-            setUser(authenticated);
-            setShowAuth(false);
-            notify(`Welcome back, ${authenticated.name.split(' ')[0]}`);
+      <Sheet
+        open={isPrescriptionOpen}
+        onClose={() => setIsPrescriptionOpen(false)}
+        title="Send a prescription"
+        description="The image is stored privately and only opened through a short-lived signed link."
+        icon={
+          <FileText
+            size={20}
+            className="text-[#0B7A6B]"
+          />
+        }
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={handlePrescriptionSubmit}
+              disabled={
+                submitting ||
+                !selectedBranch ||
+                !prescriptionFile
+              }
+              className="lp-press flex w-full items-center justify-center gap-2.5 rounded-2xl bg-[#0B7A6B] py-4 text-[15px] font-semibold text-white disabled:opacity-50"
+            >
+              {submitting && (
+                <Loader2 size={18} className="animate-spin" />
+              )}
+              Create prescription order
+            </button>
+            <p className="mt-3.5 text-center text-[12px] text-[#0B1220]/45">
+              The pharmacist reviews the photo in the console and confirms the
+              bill on WhatsApp. The prescription image is never shared in a
+              message.
+            </p>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <PrescriptionFilePicker
+            file={prescriptionFile}
+            previewUrl={previewUrl}
+            error={uploadError}
+            onPick={(event) =>
+              pickPrescription(event, 'standalone')
+            }
+            onClear={clearStandalonePrescription}
+            inputRef={prescriptionInputRef}
+          />
+
+          <DeliveryFields
+            address={address}
+            errors={addressErrors}
+            onChange={handleAddressChange}
+            requireArea={false}
+          />
+
+          {branchPicker}
+        </div>
+      </Sheet>
+
+      <AuthSheet
+        open={showAuth}
+        onClose={() => setShowAuth(false)}
+        branchCount={branchCount}
+        onAuthenticated={(authenticated) => {
+          setUser(authenticated);
+          setShowAuth(false);
+          notify(
+            `Signed in as ${authenticated.name.split(' ')[0]}.`,
+          );
+        }}
+      />
+
+      {user && (
+        <AccountSheet
+          open={showAccount}
+          onClose={() => setShowAccount(false)}
+          user={user}
+          onUserChange={setUser}
+          onLogout={handleLogout}
+          onAdmin={() => {
+            setShowAccount(false);
+            setView('admin');
           }}
+          notify={notify}
         />
       )}
-
-      {styleNode}
     </div>
   );
 }
