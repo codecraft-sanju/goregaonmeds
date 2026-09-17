@@ -4561,9 +4561,9 @@ function AdminPanel({
                       key={medicine._id}
                       className="flex items-center gap-4 p-4 md:p-5"
                     >
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#0B1220]/[0.04] text-2xl">
-                        <ProductThumb medicine={medicine} fallbackImageUrl={globalSettings?.fallbackImageUrl} />
-                      </div>
+                   <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#0B1220]/[0.04] text-2xl">
+  <ProductThumb medicine={medicine} fallbackImageUrl={globalSettings?.fallbackImageUrl} />
+</div>
 
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[15px] font-semibold">
@@ -6532,15 +6532,15 @@ export default function Page() {
                   key={item.cartItemId}
                   className="flex gap-3.5 rounded-[24px] bg-[#0B1220]/[0.035] p-3.5"
                 >
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white text-2xl shadow-sm border border-[#0B1220]/[0.05]">
-                    <ProductThumb
-                      fallbackImageUrl={globalSettings?.fallbackImageUrl}
-                      medicine={{
-                        imageUrl: item.imageUrl,
-                        name: item.name,
-                      }}
-                    />
-                  </div>
+                <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white text-2xl shadow-sm border border-[#0B1220]/[0.05]">
+  <ProductThumb
+    fallbackImageUrl={globalSettings?.fallbackImageUrl}
+    medicine={{
+      imageUrl: item.imageUrl,
+      name: item.name,
+    }}
+  />
+</div>
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
