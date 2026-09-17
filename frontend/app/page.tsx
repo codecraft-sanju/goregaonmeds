@@ -54,6 +54,7 @@ import {
   UploadCloud,
   UserRound,
   X,
+  Settings
 } from 'lucide-react';
 
 /* ================================================================== */
@@ -64,7 +65,7 @@ type BuyType = 'full' | 'loose';
 type LocateStatus = 'idle' | 'loading' | 'success' | 'error';
 type Role = 'customer' | 'admin';
 type ToastTone = 'success' | 'error';
-type AdminTab = 'orders' | 'catalogue' | 'branches' | 'whatsapp';
+type AdminTab = 'orders' | 'catalogue' | 'branches' | 'whatsapp' | 'settings';
 type OrderRange = 'today' | 'week' | 'month' | 'all';
 
 type OrderStatus =
@@ -81,6 +82,11 @@ interface UserAddress {
   houseNo: string;
   area: string;
   landmark: string;
+}
+
+interface GlobalSettings {
+  fallbackImageUrl: string;
+  fallbackImagePublicId: string;
 }
 
 interface AuthUser {
@@ -111,7 +117,6 @@ interface Medicine {
   unitType: string;
   isDivisible: boolean;
   requiresPrescription: boolean;
-  emoji: string;
   imageUrl: string;
   imagePublicId: string;
   tag: string;
@@ -139,7 +144,6 @@ interface CartItem {
   medicineId: string;
   name: string;
   displayName: string;
-  emoji: string;
   imageUrl: string;
   buyType: BuyType;
   qty: number;
@@ -425,7 +429,6 @@ function parseStoredCart(raw: string | null): CartItem[] {
         ...item,
         displayName:
           typeof item.displayName === 'string' ? item.displayName : item.name,
-        emoji: typeof item.emoji === 'string' ? item.emoji : '',
         imageUrl: typeof item.imageUrl === 'string' ? item.imageUrl : '',
         qty: Math.min(Math.max(Math.round(item.qty), 1), MAX_QTY_PER_ITEM),
         unitPrice: Math.max(0, item.unitPrice),
@@ -499,7 +502,6 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers['Content-Type'] = 'application/json';
   }
 
-  // 🟢 LocalStorage se token nikal kar header me bhej rahe hain
   if (typeof window !== 'undefined') {
     const token = window.localStorage.getItem('lp_token');
     if (token) {
@@ -541,7 +543,6 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const payload = isJson ? await response.json().catch(() => null) : null;
 
   if (!response.ok) {
-    // 🟢 Agar token expire ho gaya, toh clear kar do
     if (response.status === 401 && typeof window !== 'undefined') {
       window.localStorage.removeItem('lp_token');
     }
@@ -1277,9 +1278,11 @@ const QuantityStepper = memo(function QuantityStepper({
 
 const ProductThumb = memo(function ProductThumb({
   medicine,
+  fallbackImageUrl,
   className = '',
 }: {
-  medicine: Pick<Medicine, 'emoji' | 'imageUrl' | 'name'>;
+  medicine: Pick<Medicine, 'imageUrl' | 'name'>;
+  fallbackImageUrl?: string;
   className?: string;
 }) {
   const [loaded, setLoaded] = useState(false);
@@ -1288,12 +1291,14 @@ const ProductThumb = memo(function ProductThumb({
   useEffect(() => {
     setLoaded(false);
     setFailed(false);
-  }, [medicine.imageUrl]);
+  }, [medicine.imageUrl, fallbackImageUrl]);
 
-  if (medicine.imageUrl && !failed) {
+  const src = medicine.imageUrl || fallbackImageUrl;
+
+  if (src && !failed) {
     return (
       <img
-        src={medicine.imageUrl}
+        src={src}
         alt={medicine.name}
         loading="lazy"
         decoding="async"
@@ -1309,12 +1314,8 @@ const ProductThumb = memo(function ProductThumb({
   }
 
   return (
-    <span
-      className={cx('text-4xl', className)}
-      role="img"
-      aria-label={medicine.name}
-    >
-      {medicine.emoji || '💊'}
+    <span className={cx('flex items-center justify-center text-[#0B1220]/20', className)}>
+      <ImageIcon size={30} strokeWidth={1.5} />
     </span>
   );
 });
@@ -1473,6 +1474,7 @@ const ProductCard = memo(function ProductCard({
   index,
   selectedBranchId,
   cartQuantities,
+  fallbackImageUrl,
   onAdd,
   onUpdateQty,
 }: {
@@ -1480,6 +1482,7 @@ const ProductCard = memo(function ProductCard({
   index: number;
   selectedBranchId?: string;
   cartQuantities: Record<string, number>;
+  fallbackImageUrl?: string;
   onAdd: (medicine: Medicine, buyType: BuyType) => void;
   onUpdateQty: (cartItemId: string, delta: number) => void;
 }) {
@@ -1487,12 +1490,11 @@ const ProductCard = memo(function ProductCard({
   const [justAdded, setJustAdded] = useState(false);
   const addedTimer = useRef<number | null>(null);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    return () => {
       if (addedTimer.current) window.clearTimeout(addedTimer.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const divisor = Math.max(1, medicine.packSize);
   const isLoose = buyType === 'loose';
@@ -1504,8 +1506,7 @@ const ProductCard = memo(function ProductCard({
   const inStock = Boolean(
     inventory &&
       inventory.isAvailable &&
-      inventory.stockUnits >=
-        (isLoose ? 1 : medicine.isDivisible ? medicine.packSize : 1),
+      inventory.stockUnits >= (isLoose ? 1 : medicine.isDivisible ? medicine.packSize : 1)
   );
 
   const stockLabel =
@@ -1521,7 +1522,6 @@ const ProductCard = memo(function ProductCard({
   const handleAdd = () => {
     onAdd(medicine, buyType);
     setJustAdded(true);
-
     if (addedTimer.current) window.clearTimeout(addedTimer.current);
     addedTimer.current = window.setTimeout(() => setJustAdded(false), 900);
   };
@@ -1534,6 +1534,7 @@ const ProductCard = memo(function ProductCard({
       <div className="relative mb-3 flex aspect-square w-full items-center justify-center overflow-hidden rounded-[20px] bg-[#0B1220]/[0.035]">
         <ProductThumb
           medicine={medicine}
+          fallbackImageUrl={fallbackImageUrl}
           className="transition-transform duration-500 group-hover:scale-105"
         />
 
@@ -1558,23 +1559,11 @@ const ProductCard = memo(function ProductCard({
       </div>
 
       <div className="flex flex-1 flex-col px-1.5 pb-1.5">
-        <h3
-          className="line-clamp-2 text-[15px] font-semibold leading-snug tracking-[-0.01em]"
-          title={medicine.name}
-        >
+        <h3 className="line-clamp-2 text-[15px] font-semibold leading-snug tracking-[-0.01em]" title={medicine.name}>
           {medicine.name}
         </h3>
-
-        <p className="mt-1 line-clamp-1 text-[12.5px] text-[#0B1220]/50">
-          {medicine.use}
-        </p>
-
-        <p
-          className={cx(
-            'mt-2 text-[11.5px] font-medium',
-            inStock ? 'text-emerald-600' : 'text-rose-500',
-          )}
-        >
+        <p className="mt-1 line-clamp-1 text-[12.5px] text-[#0B1220]/50">{medicine.use}</p>
+        <p className={cx('mt-2 text-[11.5px] font-medium', inStock ? 'text-emerald-600' : 'text-rose-500')}>
           {stockLabel}
         </p>
 
@@ -1586,14 +1575,8 @@ const ProductCard = memo(function ProductCard({
               value={buyType}
               onChange={setBuyType}
               options={[
-                {
-                  value: 'full',
-                  label: `Full ${medicine.packType.toLowerCase()}`,
-                },
-                {
-                  value: 'loose',
-                  label: `Single ${medicine.unitType.toLowerCase()}`,
-                },
+                { value: 'full', label: `Full ${medicine.packType.toLowerCase()}` },
+                { value: 'loose', label: `Single ${medicine.unitType.toLowerCase()}` },
               ]}
             />
           </div>
@@ -1601,45 +1584,21 @@ const ProductCard = memo(function ProductCard({
 
         <div className="mt-auto flex items-end justify-between gap-2 pt-4">
           <div>
-            {discount > 0 && (
-              <span className="block text-[12px] tabular-nums text-[#0B1220]/35 line-through">
-                {formatMoney(mrp)}
-              </span>
-            )}
-            <span className="block text-[17px] font-semibold leading-none tracking-[-0.02em] tabular-nums">
-              {formatMoney(price)}
-            </span>
+            {discount > 0 && <span className="block text-[12px] tabular-nums text-[#0B1220]/35 line-through">{formatMoney(mrp)}</span>}
+            <span className="block text-[17px] font-semibold leading-none tracking-[-0.02em] tabular-nums">{formatMoney(price)}</span>
           </div>
 
           {qtyInCart > 0 ? (
-            <QuantityStepper
-              qty={qtyInCart}
-              label={medicine.name}
-              onDecrease={() => onUpdateQty(cartItemId, -1)}
-              onIncrease={() => onUpdateQty(cartItemId, 1)}
-            />
+            <QuantityStepper qty={qtyInCart} label={medicine.name} onDecrease={() => onUpdateQty(cartItemId, -1)} onIncrease={() => onUpdateQty(cartItemId, 1)} />
           ) : (
             <button
               type="button"
               onClick={handleAdd}
               disabled={!inStock}
-              aria-label={
-                inStock
-                  ? `Add ${medicine.name} to cart`
-                  : `${medicine.name} is out of stock`
-              }
-              className={cx(
-                'lp-press flex h-10 w-10 items-center justify-center rounded-full text-white disabled:cursor-not-allowed disabled:bg-[#0B1220]/20',
-                justAdded
-                  ? 'bg-[#0B7A6B]'
-                  : 'bg-[#0B1220] hover:bg-[#0B7A6B]',
-              )}
+              aria-label={inStock ? `Add ${medicine.name} to cart` : `${medicine.name} is out of stock`}
+              className={cx('lp-press flex h-10 w-10 items-center justify-center rounded-full text-white disabled:cursor-not-allowed disabled:bg-[#0B1220]/20', justAdded ? 'bg-[#0B7A6B]' : 'bg-[#0B1220] hover:bg-[#0B7A6B]')}
             >
-              {justAdded ? (
-                <Check size={18} strokeWidth={3} className="lp-pop" />
-              ) : (
-                <Plus size={18} strokeWidth={3} />
-              )}
+              {justAdded ? <Check size={18} strokeWidth={3} className="lp-pop" /> : <Plus size={18} strokeWidth={3} />}
             </button>
           )}
         </div>
@@ -2051,13 +2010,11 @@ function AuthSheet({
               password: form.password,
             };
 
-      // 🟢 API se token receive kar rahe hain
       const data = await api<{ user: AuthUser; token: string }>(path, {
         method: 'POST',
         body: JSON.stringify(body),
       });
 
-      // 🟢 Token ko browser me hamesha ke liye save kar rahe hain
       if (typeof window !== 'undefined' && data.token) {
         window.localStorage.setItem('lp_token', data.token);
       }
@@ -2425,7 +2382,7 @@ function AccountSheet({
 }
 
 /* ================================================================== */
-/*  Admin forms                                                      */
+/*  Admin forms                                                       */
 /* ================================================================== */
 
 const EMPTY_MEDICINE = {
@@ -2439,7 +2396,6 @@ const EMPTY_MEDICINE = {
   unitType: 'Tablet',
   isDivisible: false,
   requiresPrescription: false,
-  emoji: '💊',
   imageUrl: '',
   imagePublicId: '',
   tag: '',
@@ -2450,6 +2406,7 @@ function MedicineForm({
   initial,
   categories,
   branches,
+  globalSettings,
   onCancel,
   onSaved,
   onError,
@@ -2457,6 +2414,7 @@ function MedicineForm({
   initial: Medicine | null;
   categories: string[];
   branches: Branch[];
+  globalSettings?: GlobalSettings | null;
   onCancel: () => void;
   onSaved: (medicine: Medicine) => void;
   onError: (message: string) => void;
@@ -2474,7 +2432,6 @@ function MedicineForm({
           unitType: initial.unitType,
           isDivisible: initial.isDivisible,
           requiresPrescription: initial.requiresPrescription,
-          emoji: initial.emoji,
           imageUrl: initial.imageUrl,
           imagePublicId: initial.imagePublicId,
           tag: initial.tag,
@@ -2686,15 +2643,15 @@ function MedicineForm({
 
       <div className="flex flex-col gap-6 lg:flex-row">
         <div className="shrink-0">
-          <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-[24px] bg-[#0B1220]/[0.04] text-5xl">
-            {form.imageUrl ? (
+          <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-[24px] bg-[#0B1220]/[0.04] border border-[#0B1220]/[0.08]">
+            {form.imageUrl || globalSettings?.fallbackImageUrl ? (
               <img
-                src={form.imageUrl}
-                alt=""
+                src={form.imageUrl || globalSettings?.fallbackImageUrl}
+                alt="Preview"
                 className="h-full w-full object-cover"
               />
             ) : (
-              <span>{form.emoji || '💊'}</span>
+              <ImageIcon className="text-[#0B1220]/20" size={32} />
             )}
           </div>
 
@@ -2850,14 +2807,6 @@ function MedicineForm({
             error={errors.packSize}
             onChange={handleInput}
             hint="e.g., If a strip has 10 tablets, enter 10."
-          />
-
-          <Field
-            name="emoji"
-            label="Fallback emoji"
-            value={form.emoji}
-            onChange={handleInput}
-            maxLength={4}
           />
         </div>
       </div>
@@ -3311,7 +3260,7 @@ function BranchForm({
 }
 
 /* ================================================================== */
-/*  Admin                                                            */
+/*  Admin                                                             */
 /* ================================================================== */
 
 const StatCard = memo(function StatCard({
@@ -3584,6 +3533,8 @@ function OrderDetailSheet({
 function AdminPanel({
   user,
   branches,
+  globalSettings,
+  onSettingsChange,
   onBranchesChange,
   onBackToStore,
   onLogout,
@@ -3591,6 +3542,8 @@ function AdminPanel({
 }: {
   user: AuthUser;
   branches: Branch[];
+  globalSettings: GlobalSettings | null;
+  onSettingsChange: (settings: GlobalSettings) => void;
   onBranchesChange: (branches: Branch[]) => void;
   onBackToStore: () => void;
   onLogout: () => void;
@@ -3638,6 +3591,52 @@ function AdminPanel({
   const [waLoading, setWaLoading] = useState(false);
   const [waTestPhone, setWaTestPhone] = useState('');
   const [waProcessing, setWaProcessing] = useState(false);
+
+  // Settings States
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const fallbackInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFallbackUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    setSettingsLoading(true);
+    try {
+      const body = new FormData();
+      body.append('image', file);
+      
+      const uploadData = await api<{ url: string; publicId: string }>('/api/uploads/product', { method: 'POST', body });
+
+      const settingsData = await api<{ setting: GlobalSettings }>('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ fallbackImageUrl: uploadData.url, fallbackImagePublicId: uploadData.publicId })
+      });
+      
+      onSettingsChange(settingsData.setting);
+      notify('Fallback image updated successfully!');
+    } catch (error) {
+      notify(errorText(error, 'Failed to upload fallback image.'), 'error');
+    } finally {
+      setSettingsLoading(false);
+      if (fallbackInputRef.current) fallbackInputRef.current.value = '';
+    }
+  };
+
+  const removeFallbackImage = async () => {
+    setSettingsLoading(true);
+    try {
+      const settingsData = await api<{ setting: GlobalSettings }>('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ fallbackImageUrl: '', fallbackImagePublicId: '' })
+      });
+      onSettingsChange(settingsData.setting);
+      notify('Fallback image removed.');
+    } catch (error) {
+      notify(errorText(error, 'Failed to remove image.'), 'error');
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
 
   useOutsideClick(menuOpen, menuRef, () => setMenuOpen(false));
   useEscapeKey(menuOpen, () => setMenuOpen(false));
@@ -4005,6 +4004,11 @@ function AdminPanel({
       value: 'whatsapp',
       label: 'WhatsApp',
       icon: <MessageCircle size={16} strokeWidth={2.3} />,
+    },
+    {
+      value: 'settings',
+      label: 'Settings',
+      icon: <Settings size={16} strokeWidth={2.3} />,
     },
   ];
 
@@ -4485,6 +4489,7 @@ function AdminPanel({
                 initial={editingMedicine}
                 categories={categories}
                 branches={branches}
+                globalSettings={globalSettings}
                 onCancel={() => {
                   setShowMedicineForm(false);
                   setEditingMedicine(null);
@@ -4557,7 +4562,7 @@ function AdminPanel({
                       className="flex items-center gap-4 p-4 md:p-5"
                     >
                       <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#0B1220]/[0.04] text-2xl">
-                        <ProductThumb medicine={medicine} />
+                        <ProductThumb medicine={medicine} fallbackImageUrl={globalSettings?.fallbackImageUrl} />
                       </div>
 
                       <div className="min-w-0 flex-1">
@@ -4901,16 +4906,63 @@ function AdminPanel({
             </div>
           </section>
         )}
-      </main>
 
-      <OrderDetailSheet
-        order={selectedOrder}
-        onClose={() => setSelectedOrder(null)}
-        onStatusChange={changeOrderStatus}
-        onMessageCustomer={messageCustomer}
-        onResendNotification={resendNotification}
-        notify={notify}
-      />
+        {tab === 'settings' && (
+          <section className="space-y-6">
+            <div>
+              <h2 className="text-[20px] font-semibold">Store Settings</h2>
+              <p className="mt-1 text-[13px] text-[#0B1220]/55">Configure global store preferences.</p>
+            </div>
+
+            <div className="rounded-[28px] border border-[#0B1220]/[0.06] bg-white p-6 shadow-[0_1px_2px_rgba(11,18,32,0.06)] md:p-8">
+              <h3 className="mb-4 text-[16px] font-semibold">Default Fallback Image</h3>
+              <p className="mb-6 text-[13px] text-[#0B1220]/55">
+                This image will automatically appear for all medicines that don't have a specific image uploaded.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-6 items-start">
+                <div className="flex h-36 w-36 shrink-0 items-center justify-center overflow-hidden rounded-[24px] bg-[#0B1220]/[0.04] border border-[#0B1220]/[0.08]">
+                  {globalSettings?.fallbackImageUrl ? (
+                    <img src={globalSettings.fallbackImageUrl} alt="Fallback" className="h-full w-full object-cover" />
+                  ) : (
+                    <ImageIcon className="text-[#0B1220]/20" size={40} />
+                  )}
+                </div>
+
+                <div className="pt-2">
+                  <input
+                    ref={fallbackInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+                    className="hidden"
+                    onChange={handleFallbackUpload}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fallbackInputRef.current?.click()}
+                    disabled={settingsLoading}
+                    className="lp-press flex items-center justify-center gap-2 rounded-2xl bg-[#0B1220] px-6 py-3.5 text-[13.5px] font-semibold text-white hover:bg-[#0B7A6B] disabled:opacity-60"
+                  >
+                    {settingsLoading ? <Loader2 className="animate-spin" size={16} /> : <UploadCloud size={16} />}
+                    {globalSettings?.fallbackImageUrl ? 'Change Fallback Image' : 'Upload Image'}
+                  </button>
+
+                  {globalSettings?.fallbackImageUrl && (
+                    <button
+                      type="button"
+                      onClick={removeFallbackImage}
+                      disabled={settingsLoading}
+                      className="mt-4 text-[13px] font-medium text-rose-600 hover:underline disabled:opacity-60"
+                    >
+                      Remove default image
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+      </main>
     </div>
   );
 }
@@ -4990,6 +5042,8 @@ export default function Page() {
   const [showAccount, setShowAccount] = useState(false);
   const [view, setView] = useState<'store' | 'admin'>('store');
   const [showWelcome, setShowWelcome] = useState(false);
+
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettings | null>(null);
 
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -5095,6 +5149,13 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Fetch Global Settings
+  useEffect(() => {
+    api<{ setting: GlobalSettings }>('/api/settings')
+      .then((data) => setGlobalSettings(data.setting))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -5413,14 +5474,12 @@ export default function Page() {
               buyType === 'loose'
                 ? `${medicine.name} — 1 ${medicine.unitType}`
                 : `${medicine.name} — ${medicine.packType} of ${medicine.packSize}`,
-            emoji: medicine.emoji,
             imageUrl: medicine.imageUrl,
             buyType,
             qty: 1,
             unitPrice,
             unitMrp,
-            requiresPrescription:
-              medicine.requiresPrescription,
+            requiresPrescription: medicine.requiresPrescription,
           },
         ];
       });
@@ -5843,7 +5902,6 @@ export default function Page() {
       // Local session state still resets.
     }
 
-    // 🟢 Logout par token delete kar do
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem('lp_token');
     }
@@ -5896,6 +5954,8 @@ export default function Page() {
         <AdminPanel
           user={user}
           branches={branches}
+          globalSettings={globalSettings}
+          onSettingsChange={setGlobalSettings}
           onBranchesChange={(next) => {
             setBranches(next);
             setSelectedBranch((prev) => {
@@ -6228,6 +6288,7 @@ export default function Page() {
                   index={index}
                   selectedBranchId={selectedBranch?._id}
                   cartQuantities={cartQuantities}
+                  fallbackImageUrl={globalSettings?.fallbackImageUrl}
                   onAdd={addToCart}
                   onUpdateQty={updateQty}
                 />
@@ -6471,10 +6532,10 @@ export default function Page() {
                   key={item.cartItemId}
                   className="flex gap-3.5 rounded-[24px] bg-[#0B1220]/[0.035] p-3.5"
                 >
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white text-2xl shadow-sm">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white text-2xl shadow-sm border border-[#0B1220]/[0.05]">
                     <ProductThumb
+                      fallbackImageUrl={globalSettings?.fallbackImageUrl}
                       medicine={{
-                        emoji: item.emoji,
                         imageUrl: item.imageUrl,
                         name: item.name,
                       }}

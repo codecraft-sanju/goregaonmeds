@@ -149,16 +149,20 @@ function uniqueStrings(values) {
 
 const { Schema, model, Types } = mongoose;
 
-/* ================================================================== */
-/*  1. DATABASE SCHEMAS                                               */
-/* ================================================================== */
 
-// 🟢 NEW: Schema for WhatsApp Session storage in MongoDB
 const waAuthSchema = new Schema({
   _id: { type: String, required: true },
   data: { type: String, required: true }
 });
 const WaAuth = model('WaAuth', waAuthSchema);
+
+
+const settingSchema = new Schema({
+  key: { type: String, required: true, unique: true },
+  fallbackImageUrl: { type: String, default: '' },
+  fallbackImagePublicId: { type: String, default: '' }
+});
+const Setting = model('Setting', settingSchema);
 
 const addressSchema = new Schema(
   {
@@ -254,7 +258,7 @@ const medicineSchema = new Schema(
     unitType: { type: String, required: true, trim: true, maxlength: 30, default: 'Tablet' },
     isDivisible: { type: Boolean, default: false },
     requiresPrescription: { type: Boolean, default: false },
-    emoji: { type: String, trim: true, maxlength: 8, default: '💊' },
+    
     imageUrl: { type: String, trim: true, default: '' },
     imagePublicId: { type: String, trim: true, default: '' },
     tag: { type: String, trim: true, maxlength: 30, default: '' },
@@ -821,7 +825,7 @@ const medicineInput = z
     unitType: z.string().trim().min(1).max(30).default('Tablet'),
     isDivisible: z.boolean().default(false),
     requiresPrescription: z.boolean().default(false),
-    emoji: z.string().trim().max(8).default('💊'),
+   
     imageUrl: z.string().trim().max(500).optional().default(''),
     imagePublicId: z.string().trim().max(250).optional().default(''),
     tag: z.string().trim().max(30).optional().default(''),
@@ -1262,7 +1266,7 @@ const getPrescriptionForOrder = asyncHandler(async (req, res) => {
   res.json({ url: signedPrescriptionUrl(order.prescriptionPublicId), expiresInSeconds: 600 });
 });
 
-// 🟢 NEW: Admin WhatsApp Control Endpoints
+
 const whatsappStatus = asyncHandler(async (_req, res) => {
   const pendingCount = await countUnnotifiedOrders();
   res.json({
@@ -1388,7 +1392,33 @@ const deleteProductUpload = asyncHandler(async (req, res) => {
   await destroyCloudinaryAsset(publicId, 'upload');
   res.json({ message: 'Asset deleted.' });
 });
+/* ================================================================== */
+/*  SETTINGS CONTROLLERS                                              */
+/* ================================================================== */
 
+const getSettings = asyncHandler(async (_req, res) => {
+  let setting = await Setting.findOne({ key: 'global' });
+  if (!setting) setting = await Setting.create({ key: 'global' });
+  res.json({ setting });
+});
+
+const updateSettings = asyncHandler(async (req, res) => {
+  let setting = await Setting.findOne({ key: 'global' });
+  if (!setting) setting = await Setting.create({ key: 'global' });
+
+  const { fallbackImageUrl, fallbackImagePublicId } = req.body;
+
+ 
+  if (setting.fallbackImagePublicId && setting.fallbackImagePublicId !== fallbackImagePublicId && fallbackImagePublicId !== undefined) {
+    await destroyCloudinaryAsset(setting.fallbackImagePublicId, 'upload');
+  }
+
+  if (fallbackImageUrl !== undefined) setting.fallbackImageUrl = fallbackImageUrl;
+  if (fallbackImagePublicId !== undefined) setting.fallbackImagePublicId = fallbackImagePublicId;
+
+  await setting.save();
+  res.json({ setting });
+});
 /* ================================================================== */
 /*  EXPRESS ROUTING                                                   */
 /* ================================================================== */
@@ -1416,6 +1446,10 @@ medicineRouter.post('/', protect, adminOnly, createMedicine);
 medicineRouter.put('/:id', protect, adminOnly, updateMedicine);
 medicineRouter.patch('/:id/visibility', protect, adminOnly, setMedicineVisibility);
 medicineRouter.delete('/:id', protect, adminOnly, deleteMedicine);
+
+const settingsRouter = express.Router();
+settingsRouter.get('/', getSettings);
+settingsRouter.put('/', protect, adminOnly, updateSettings);
 
 const branchRouter = express.Router();
 branchRouter.get('/', optionalAuth, listBranches);
@@ -1495,6 +1529,7 @@ app.use('/api/branches', branchRouter);
 app.use('/api/orders', orderRouter);
 app.use('/api/uploads', uploadRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/settings', settingsRouter);
 
 app.use((req, _res, next) => next(new ApiError(404, `No route for ${req.method} ${req.originalUrl}`)));
 
