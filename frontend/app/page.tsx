@@ -56,7 +56,7 @@ import {
   X,
   Settings
 } from 'lucide-react';
-
+import { BranchMarquee } from './BranchMarquee';
 /* ================================================================== */
 /*  Types                                                             */
 /* ================================================================== */
@@ -6219,7 +6219,7 @@ export default function Page() {
           </div>
         </div>
       </section>
-
+<BranchMarquee />
       <main className="mx-auto max-w-7xl px-4 pb-28 pt-10 sm:px-6 lg:px-8">
         <div className="mb-6 flex items-baseline justify-between gap-4">
           <h2 className="text-[24px] font-semibold tracking-[-0.03em] sm:text-[28px]">
