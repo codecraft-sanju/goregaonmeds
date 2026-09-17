@@ -57,6 +57,7 @@ import {
   Settings
 } from 'lucide-react';
 import { BranchMarquee } from './BranchMarquee';
+import Image from 'next/image';
 /* ================================================================== */
 /*  Types                                                             */
 /* ================================================================== */
@@ -1294,18 +1295,17 @@ const ProductThumb = memo(function ProductThumb({
   }, [medicine.imageUrl, fallbackImageUrl]);
 
   const src = medicine.imageUrl || fallbackImageUrl;
-
-  if (src && !failed) {
+if (src && !failed) {
     return (
-      <img
+      <Image
         src={src}
         alt={medicine.name}
-        loading="lazy"
-        decoding="async"
+        fill
+        sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
         className={cx(
-          'h-full w-full object-cover transition-all duration-700',
+          'object-cover transition-all duration-700',
           loaded ? 'scale-100 opacity-100' : 'scale-[1.04] opacity-0',
           className,
         )}
