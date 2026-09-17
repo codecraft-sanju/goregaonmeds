@@ -14,11 +14,9 @@ const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const compression = require('compression');
 const morgan = require('morgan');
+const QRCode = require('qrcode');
 const { v2: cloudinary } = require('cloudinary');
 const { z } = require('zod');
-const { OpenWAClient } = require('@rmyndharis/openwa');
-
-
 
 const REQUIRED_ENV = ['MONGODB_URI', 'JWT_SECRET'];
 
@@ -33,6 +31,11 @@ if (process.env.JWT_SECRET.length < 32) {
   console.error('[config] JWT_SECRET must be at least 32 characters.');
   process.exit(1);
 }
+
+const normalizePath = (value, fallback) => {
+  const raw = String(value || fallback).trim();
+  return raw.startsWith('/') ? raw : `/${raw}`;
+};
 
 const config = {
   env: process.env.NODE_ENV || 'development',
@@ -52,13 +55,19 @@ const config = {
     apiKey: process.env.CLOUDINARY_API_KEY,
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
-  openwa: {
-    apiUrl: process.env.OPENWA_API_URL,
-    apiKey: process.env.OPENWA_API_KEY,
-    sessionId: process.env.OPENWA_SESSION_ID,
-    timeoutMs: Number(process.env.OPENWA_TIMEOUT_MS) || 15000,
-    // Promote an order out of `pending_whatsapp` once the confirmation is delivered.
+  // 🟢 NEW: Updated to point to your Custom Baileys Gateway
+  whatsappGateway: {
+    apiUrl: (process.env.WA_GATEWAY_URL || '').trim().replace(/\/$/, ''), // e.g. http://localhost:3000
+    apiKey: process.env.WA_API_KEY,     // Your User API Key from Gateway
     autoAdvanceToPlaced: process.env.OPENWA_AUTO_PLACED !== 'false',
+    timeoutMs: Number(process.env.WA_GATEWAY_TIMEOUT_MS) || 15000,
+    connectTimeoutMs: Number(process.env.WA_GATEWAY_CONNECT_TIMEOUT_MS) || 30000,
+    paths: {
+      send: normalizePath(process.env.WA_GATEWAY_SEND_PATH, '/send-message'),
+      status: normalizePath(process.env.WA_GATEWAY_STATUS_PATH, '/session/status'),
+      connect: normalizePath(process.env.WA_GATEWAY_CONNECT_PATH, '/session/connect'),
+      logout: normalizePath(process.env.WA_GATEWAY_LOGOUT_PATH, '/session/logout'),
+    },
   },
   seedAdmin: {
     email: process.env.SEED_ADMIN_EMAIL,
@@ -83,27 +92,30 @@ if (cloudinaryEnabled) {
   console.warn('[config] Cloudinary credentials missing — image upload routes will return 503.');
 }
 
-const openWaEnabled = Boolean(
-  config.openwa.apiUrl && config.openwa.apiKey && config.openwa.sessionId,
-);
-
-const waClient = openWaEnabled
-  ? new OpenWAClient({
-      baseUrl: config.openwa.apiUrl,
-      apiKey: config.openwa.apiKey,
-      timeoutMs: config.openwa.timeoutMs,
-    })
-  : null;
-
-if (!openWaEnabled) {
-  console.warn(
-    '[config] OpenWA credentials missing — order and status WhatsApp messages are disabled.',
-  );
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
-/* ================================================================== */
-/*  2. ERRORS AND HELPERS                                              */
-/* ================================================================== */
+const waGatewayEnabled = Boolean(
+  config.whatsappGateway.apiUrl &&
+    config.whatsappGateway.apiKey &&
+    isHttpUrl(config.whatsappGateway.apiUrl),
+);
+
+if (!waGatewayEnabled) {
+  console.warn(
+    '[config] Custom WA Gateway credentials missing or WA_GATEWAY_URL is invalid — order and status WhatsApp messages are disabled.',
+  );
+} else if (isProd && config.whatsappGateway.apiUrl.startsWith('http://') && !/localhost|127\.0\.0\.1/.test(config.whatsappGateway.apiUrl)) {
+  console.warn('[config] WA_GATEWAY_URL uses plain http in production. Use https so the API key is not sent in clear text.');
+}
+
+
 
 class ApiError extends Error {
   constructor(statusCode, message, details) {
@@ -112,6 +124,15 @@ class ApiError extends Error {
     this.details = details;
     this.isOperational = true;
     Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+class GatewayError extends Error {
+  constructor(message, { status = 0, unreachable = false } = {}) {
+    super(message);
+    this.name = 'GatewayError';
+    this.status = status;
+    this.unreachable = unreachable;
   }
 }
 
@@ -130,6 +151,11 @@ const digitsOnly = (value) => String(value ?? '').replace(/\D/g, '');
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const buildSearchRegex = (value) => new RegExp(escapeRegex(value.slice(0, 60)), 'i');
 const round2 = (value) => Number((Math.round(value * 100) / 100).toFixed(2));
+
+const maskPhone = (value) => {
+  const digits = digitsOnly(value);
+  return digits.length > 4 ? `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}` : '****';
+};
 
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -181,13 +207,10 @@ function uniqueStrings(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
-/* ================================================================== */
-/*  3. MODELS                                                          */
-/* ================================================================== */
 
 const { Schema, model, Types } = mongoose;
 
-/* ---------- User ---------- */
+
 
 const addressSchema = new Schema(
   {
@@ -385,12 +408,14 @@ const orderSchema = new Schema(
     customerNotifiedAt: Date,
     note: { type: String, trim: true, maxlength: 300, default: '' },
   },
-  { timestamps: true },
+  // Two admins moving the same order at once must not both commit stock.
+  { timestamps: true, optimisticConcurrency: true },
 );
 
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ 'customer.phone': 1 });
+orderSchema.index({ status: 1, customerNotifiedAt: 1, createdAt: 1 });
 
 orderSchema.pre('validate', function assignOrderNumber() {
   if (!this.orderNumber) {
@@ -406,7 +431,7 @@ orderSchema.pre('validate', function assignOrderNumber() {
 const Order = model('Order', orderSchema);
 
 /* ================================================================== */
-/*  4. AUTH + CSRF                                                     */
+/*  4. AUTH + CSRF                                                    */
 /* ================================================================== */
 
 const COOKIE_NAME = 'lp_session';
@@ -506,7 +531,7 @@ const adminOnly = (req, _res, next) => {
 };
 
 /* ================================================================== */
-/*  5. CLOUDINARY                                                      */
+/*  5. CLOUDINARY                                                     */
 /* ================================================================== */
 
 const ACCEPTED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
@@ -611,20 +636,33 @@ function signedPrescriptionUrl(publicId) {
 }
 
 /* ================================================================== */
-/*  6. WHATSAPP (OpenWA)                                               */
+/*  6. WHATSAPP (Custom Gateway integration)                          */
 /* ================================================================== */
 
 const WA_MAX_TEXT = 4096;
 const WA_THROTTLE_WINDOW_MS = 10 * 60 * 1000;
 const WA_THROTTLE_MAX_PER_CHAT = 6;
+const WA_RETRY_BATCH = 20;
+const WA_RETRY_WINDOW_MS = 72 * 60 * 60 * 1000;
+const WA_QR_MAX_RAW_LENGTH = 4096;
+const QR_DATA_URL_RE = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+const PNG_BASE64_RE = /^iVBORw0KGgo[A-Za-z0-9+/=]+$/;
+const WA_CONNECTED_STATES = new Set([
+  'open', 'connected', 'authenticated', 'ready', 'online', 'working', 'inchat', 'logged_in',
+]);
+const WA_CONNECTING_STATES = new Set([
+  'connecting', 'initializing', 'starting', 'syncing', 'pairing', 'loading', 'qr',
+  'scan_qr_code', 'qrcode', 'waiting_qr', 'pending',
+]);
 
-// Order creation is an unauthenticated route, so every request can address an
-// arbitrary phone number. This caps how often one number can be messaged, which
-// stops the gateway from being used as a spam relay. Single-process only —
-// move to Redis when you run more than one instance.
 const waSendLog = new Map();
 
-function waThrottleAllows(chatId) {
+let waLastKnown = {
+  state: waGatewayEnabled ? 'unknown' : 'not_configured',
+  checkedAt: null,
+};
+
+function waThrottleAllows(phoneRaw) {
   const now = Date.now();
 
   if (waSendLog.size > 5000) {
@@ -635,63 +673,253 @@ function waThrottleAllows(chatId) {
     }
   }
 
-  const recent = (waSendLog.get(chatId) || []).filter(
+  const recent = (waSendLog.get(phoneRaw) || []).filter(
     (at) => now - at < WA_THROTTLE_WINDOW_MS,
   );
 
   if (recent.length >= WA_THROTTLE_MAX_PER_CHAT) {
-    waSendLog.set(chatId, recent);
+    waSendLog.set(phoneRaw, recent);
     return false;
   }
 
   recent.push(now);
-  waSendLog.set(chatId, recent);
+  waSendLog.set(phoneRaw, recent);
   return true;
 }
 
-/** Customer numbers are stored as bare 10-digit Indian mobiles. */
-function customerChatId(phone) {
-  const digits = digitsOnly(phone);
-  if (!INDIAN_MOBILE_RE.test(digits)) return null;
-  return `91${digits}@c.us`;
+// The API key only ever travels server-to-server. The browser talks to our
+// admin routes, never to the gateway directly.
+async function gatewayRequest(path, { body = {}, timeoutMs } = {}) {
+  let response;
+
+  try {
+    response = await fetch(`${config.whatsappGateway.apiUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'x-api-key': config.whatsappGateway.apiKey,
+      },
+      body: JSON.stringify({ apiKey: config.whatsappGateway.apiKey, ...body }),
+      signal: AbortSignal.timeout(timeoutMs || config.whatsappGateway.timeoutMs),
+    });
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    throw new GatewayError(
+      timedOut
+        ? 'The WhatsApp gateway did not respond in time.'
+        : 'The WhatsApp gateway is unreachable.',
+      { unreachable: true },
+    );
+  }
+
+  const text = await response.text().catch(() => '');
+  let data = null;
+
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok || data?.success === false) {
+    const reason = sanitizeForMessage(
+      data?.message || data?.error || `Gateway responded with HTTP ${response.status}.`,
+      200,
+    );
+    throw new GatewayError(reason, { status: response.status });
+  }
+
+  return data ?? {};
 }
 
-/** Branch numbers already carry the country code (see the branch validator). */
-function branchChatId(phone) {
-  const digits = digitsOnly(phone);
-  if (!WHATSAPP_RE.test(digits)) return null;
-  return `${digits}@c.us`;
+function pickFirst(source, keys) {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+async function toQrDataUrl(rawQr) {
+  if (typeof rawQr !== 'string') return null;
+  const value = rawQr.trim();
+  if (!value) return null;
+
+  // Only raster data URLs are passed through; an SVG data URL could carry script.
+  if (value.startsWith('data:image/')) return QR_DATA_URL_RE.test(value) ? value : null;
+  if (PNG_BASE64_RE.test(value)) return `data:image/png;base64,${value}`;
+  if (value.length > WA_QR_MAX_RAW_LENGTH) return null;
+
+  return QRCode.toDataURL(value, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 360,
+    color: { dark: '#0B1220', light: '#FFFFFF' },
+  });
+}
+
+function buildSession(overrides = {}) {
+  return {
+    configured: waGatewayEnabled,
+    reachable: waGatewayEnabled,
+    state: waGatewayEnabled ? 'disconnected' : 'not_configured',
+    phone: '',
+    name: '',
+    qr: null,
+    message: '',
+    checkedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+// Gateways built on Baileys shape their session payloads differently, so read
+// the common field names and collapse them into one predictable contract.
+async function normalizeGatewaySession(payload) {
+  const root = payload && typeof payload === 'object' ? payload : {};
+  const data = root.data && typeof root.data === 'object' ? { ...root, ...root.data } : root;
+  const session =
+    data.session && typeof data.session === 'object' ? { ...data, ...data.session } : data;
+
+  const rawState = String(
+    pickFirst(session, ['status', 'state', 'connection', 'sessionStatus']) ?? '',
+  )
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+
+  const connected =
+    session.connected === true ||
+    session.isConnected === true ||
+    WA_CONNECTED_STATES.has(rawState);
+
+  const qr = connected
+    ? null
+    : await toQrDataUrl(
+        pickFirst(session, ['qr', 'qrCode', 'qrcode', 'qr_code', 'base64', 'qrImage']),
+      );
+
+  const account =
+    pickFirst(session, ['me', 'user', 'account', 'info']) &&
+    typeof pickFirst(session, ['me', 'user', 'account', 'info']) === 'object'
+      ? pickFirst(session, ['me', 'user', 'account', 'info'])
+      : {};
+
+  const phoneRaw =
+    pickFirst(account, ['phone', 'number', 'id', 'wid']) ??
+    pickFirst(session, ['phone', 'number', 'wid']);
+  const phone = digitsOnly(String(phoneRaw ?? '').split(':')[0].split('@')[0]).slice(0, 15);
+
+  const name = sanitizeForMessage(
+    pickFirst(account, ['name', 'pushName', 'verifiedName']) ?? pickFirst(session, ['pushName']) ?? '',
+    60,
+  );
+
+  let state = 'disconnected';
+  if (connected) state = 'connected';
+  else if (qr) state = 'qr';
+  else if (WA_CONNECTING_STATES.has(rawState)) state = 'connecting';
+
+  return buildSession({
+    state,
+    phone: connected ? phone : '',
+    name: connected ? name : '',
+    qr,
+  });
+}
+
+function rememberSession(session) {
+  waLastKnown = { state: session.state, checkedAt: session.checkedAt };
+}
+
+async function fetchWhatsAppSession() {
+  if (!waGatewayEnabled) {
+    return buildSession({
+      message: 'Set WA_GATEWAY_URL and WA_API_KEY on the server to enable WhatsApp.',
+    });
+  }
+
+  let session;
+
+  try {
+    session = await normalizeGatewaySession(
+      await gatewayRequest(config.whatsappGateway.paths.status),
+    );
+  } catch (error) {
+    if (error instanceof GatewayError && error.status === 404) {
+      session = buildSession({ state: 'disconnected' });
+    } else {
+      session = buildSession({
+        reachable: false,
+        state: 'unreachable',
+        message: error?.message || 'The WhatsApp gateway is unreachable.',
+      });
+    }
+  }
+
+  rememberSession(session);
+  return session;
+}
+
+function countUnnotifiedOrders() {
+  return Order.countDocuments({
+    status: 'pending_whatsapp',
+    customerNotifiedAt: null,
+    createdAt: { $gte: new Date(Date.now() - WA_RETRY_WINDOW_MS) },
+  });
 }
 
 /**
- * Never throws and never rejects: a messaging outage must not fail an order.
- * Returns true only when the gateway accepted the message.
+ * 🟢 NEW: Calls your custom Baileys gateway API using Fetch
  */
-async function sendWhatsAppText(chatId, text, context) {
-  if (!waClient || !chatId || !text) return false;
+async function sendWhatsAppText(phone, text, context, mediaUrls = []) {
+  if (!waGatewayEnabled || !phone || !text) return false;
 
-  if (!waThrottleAllows(chatId)) {
-    console.warn('[whatsapp] Throttled', { context, chatId });
+  if (!waThrottleAllows(phone)) {
+    console.warn('[whatsapp] Throttled', { context, phone: maskPhone(phone) });
     return false;
   }
 
   try {
-    await waClient.messages.sendText(config.openwa.sessionId, {
-      chatId,
-      text: text.slice(0, WA_MAX_TEXT),
-      linkPreview: false,
-    });
-    return true;
+    const payload = {
+      phone,
+      msg: text.slice(0, WA_MAX_TEXT),
+      type: 'whatsapp',
+    };
+
+    if (Array.isArray(mediaUrls) && mediaUrls.length > 0) {
+      payload.mediaUrls = mediaUrls;
+    }
+
+    const data = await gatewayRequest(config.whatsappGateway.paths.send, { body: payload });
+
+    if (data.success) {
+      return true;
+    }
+
+    console.error('[whatsapp] Gateway Error:', sanitizeForMessage(data.message || 'No success flag returned.', 200));
+    return false;
   } catch (error) {
     console.error('[whatsapp] Send failed', {
       context,
-      chatId,
-      status: error?.status,
+      phone: maskPhone(phone),
       message: error?.message,
-      body: error?.body,
     });
     return false;
   }
+}
+
+/** 🟢 NEW: Your Gateway automatically handles `@s.whatsapp.net` */
+function customerChatId(phone) {
+  const digits = digitsOnly(phone);
+  if (!INDIAN_MOBILE_RE.test(digits)) return null;
+  return `91${digits}`;
+}
+
+function branchChatId(phone) {
+  const digits = digitsOnly(phone);
+  if (!WHATSAPP_RE.test(digits)) return null;
+  return digits;
 }
 
 function formatCustomerAddress(customer) {
@@ -819,13 +1047,7 @@ function statusUpdateMessage(order, branch, note) {
   return lines.join('\n');
 }
 
-/**
- * Fired after the HTTP response so a slow gateway never delays checkout.
- * Fully self-contained: it resolves even when every send fails.
- */
-async function dispatchOrderNotifications(order, branch) {
-  if (!waClient) return;
-
+async function dispatchOrderNotifications(order, branch, { includeBranchAlert = true } = {}) {
   try {
     const customerSent = await sendWhatsAppText(
       customerChatId(order.customer.phone),
@@ -833,21 +1055,20 @@ async function dispatchOrderNotifications(order, branch) {
       'order-confirmation',
     );
 
-    await sendWhatsAppText(
-      branchChatId(branch.phone),
-      branchOrderAlertMessage(order, branch),
-      'branch-order-alert',
-    );
+    if (includeBranchAlert) {
+      await sendWhatsAppText(
+        branchChatId(branch.phone),
+        branchOrderAlertMessage(order, branch),
+        'branch-order-alert',
+      );
+    }
 
-    if (!customerSent) return;
+    if (!customerSent) return false;
 
     const now = new Date();
-    const update = { $set: { customerNotifiedAt: now } };
+    const update = { $set: { customerNotifiedAt: now }, $inc: { __v: 1 } };
 
-    // The old `pending_whatsapp` status meant "the customer still has to send the
-    // message". With automated delivery that is no longer true, so the order moves
-    // straight to `placed`. Set OPENWA_AUTO_PLACED=false to keep manual control.
-    if (config.openwa.autoAdvanceToPlaced) {
+    if (config.whatsappGateway.autoAdvanceToPlaced) {
       update.$set.status = 'placed';
       update.$push = {
         statusHistory: {
@@ -859,21 +1080,21 @@ async function dispatchOrderNotifications(order, branch) {
     }
 
     await Order.updateOne({ _id: order._id, status: 'pending_whatsapp' }, update);
+    return true;
   } catch (error) {
     console.error('[whatsapp] Order notification failed', {
       orderNumber: order.orderNumber,
       message: error?.message,
     });
+    return false;
   }
 }
 
 async function dispatchStatusNotification(order, branch, note) {
-  if (!waClient) return;
-
   try {
-    if (!STATUS_CUSTOMER_COPY[order.status]) return;
+    if (!STATUS_CUSTOMER_COPY[order.status]) return false;
 
-    await sendWhatsAppText(
+    return await sendWhatsAppText(
       customerChatId(order.customer.phone),
       statusUpdateMessage(order, branch, note),
       `status-${order.status}`,
@@ -883,11 +1104,12 @@ async function dispatchStatusNotification(order, branch, note) {
       orderNumber: order.orderNumber,
       message: error?.message,
     });
+    return false;
   }
 }
 
 /* ================================================================== */
-/*  7. VALIDATION                                                      */
+/*  7. VALIDATION                                                     */
 /* ================================================================== */
 
 const addressInput = z.object({
@@ -993,8 +1215,12 @@ const orderStatusInput = z.object({
   note: z.string().trim().max(300).optional().default(''),
 });
 
+const whatsappTestInput = z.object({
+  phone: z.string().regex(INDIAN_MOBILE_RE, 'Enter a 10-digit mobile number.'),
+});
+
 /* ================================================================== */
-/*  8. INVENTORY HELPERS                                               */
+/*  8. INVENTORY HELPERS                                              */
 /* ================================================================== */
 
 function inventoryEntryFor(medicine, branchId) {
@@ -1062,7 +1288,7 @@ async function releaseInventoryForOrder(order) {
 }
 
 /* ================================================================== */
-/*  9. CONTROLLERS                                                     */
+/*  9. CONTROLLERS                                                    */
 /* ================================================================== */
 
 /* ---------- Auth ---------- */
@@ -1356,7 +1582,6 @@ const createOrder = asyncHandler(async (req, res) => {
     'name shortName phone',
   );
   if (existingOrder) {
-    // A retry must not send the customer a second confirmation.
     return res.status(200).json({
       order: orderPublicSummary(existingOrder, existingOrder.branch),
       duplicate: true,
@@ -1496,15 +1721,13 @@ const createOrder = asyncHandler(async (req, res) => {
 
   res.status(201).json({ order: orderPublicSummary(order, branch), duplicate: false });
 
-  // Dispatched after the response: WhatsApp latency or downtime must never
-  // slow down or fail checkout. dispatchOrderNotifications never rejects.
   dispatchOrderNotifications(order, branch).catch((error) =>
     console.error('[whatsapp] Unexpected dispatch error', error?.message),
   );
 });
 
 const markWhatsAppOpened = asyncHandler(async (req, res) => {
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findById(req.params.id).select('user');
   if (!order) throw new ApiError(404, 'Order not found.');
 
   const ownsOrder = req.user && String(order.user || '') === String(req.user._id);
@@ -1512,8 +1735,7 @@ const markWhatsAppOpened = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'You cannot update this order.');
   }
 
-  order.whatsappOpenedAt = new Date();
-  await order.save({ validateBeforeSave: false });
+  await Order.updateOne({ _id: order._id }, { $set: { whatsappOpenedAt: new Date() } });
   res.json({ message: 'WhatsApp handoff recorded.' });
 });
 
@@ -1568,6 +1790,8 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
   if (!order) throw new ApiError(404, 'Order not found.');
   if (order.status === parsed.status) {
+    await order.populate('branch', 'name shortName phone address');
+    await order.populate('user', 'name email');
     return res.json({ order });
   }
 
@@ -1579,12 +1803,17 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     );
   }
 
+  let committedNow = false;
+  let releasedNow = false;
+
   if (parsed.status === 'confirmed' && !order.stockCommitted) {
     await commitInventoryForOrder(order);
+    committedNow = order.stockCommitted;
   }
 
   if (parsed.status === 'cancelled' && order.stockCommitted) {
     await releaseInventoryForOrder(order);
+    releasedNow = true;
   }
 
   order.status = parsed.status;
@@ -1595,17 +1824,62 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     by: req.user._id,
     note: parsed.note,
   });
-  await order.save();
+
+  try {
+    await order.save();
+  } catch (error) {
+    // Keep stock consistent with what is actually stored on the order.
+    if (committedNow) {
+      await releaseInventoryForOrder(order).catch((rollbackError) =>
+        console.error('[inventory] Rollback after failed confirm failed', rollbackError?.message),
+      );
+    }
+    if (releasedNow) {
+      order.stockCommitted = false;
+      await commitInventoryForOrder(order).catch((rollbackError) =>
+        console.error('[inventory] Rollback after failed cancel failed', rollbackError?.message),
+      );
+    }
+    throw error;
+  }
 
   await order.populate('branch', 'name shortName phone address');
   await order.populate('user', 'name email');
 
   res.json({ order });
 
-  // Same rule as order creation: notify after responding, never block the admin.
   dispatchStatusNotification(order, order.branch, parsed.note).catch((error) =>
     console.error('[whatsapp] Unexpected status dispatch error', error?.message),
   );
+});
+
+const resendOrderNotification = asyncHandler(async (req, res) => {
+  if (!waGatewayEnabled) {
+    throw new ApiError(503, 'WhatsApp is not configured on the server.');
+  }
+
+  const order = await Order.findById(req.params.id).populate('branch', 'name shortName phone address');
+  if (!order) throw new ApiError(404, 'Order not found.');
+  if (!order.branch) throw new ApiError(409, 'This order has no branch attached.');
+
+  const sent =
+    order.status === 'pending_whatsapp'
+      ? await dispatchOrderNotifications(order, order.branch, { includeBranchAlert: false })
+      : await dispatchStatusNotification(order, order.branch, '');
+
+  if (!sent) {
+    throw new ApiError(
+      502,
+      'The message was not delivered. Check the WhatsApp connection and try again.',
+    );
+  }
+
+  const fresh = await Order.findById(order._id)
+    .populate('branch', 'name shortName phone address')
+    .populate('user', 'name email')
+    .lean();
+
+  res.json({ order: fresh, message: 'WhatsApp message sent.' });
 });
 
 const getPrescriptionForOrder = asyncHandler(async (req, res) => {
@@ -1621,9 +1895,126 @@ const getPrescriptionForOrder = asyncHandler(async (req, res) => {
   const isOwner = String(order.user || '') === String(req.user?._id || '');
   if (!isAdmin && !isOwner) throw new ApiError(403, 'You cannot view this prescription.');
 
+  res.set('Cache-Control', 'no-store');
   res.json({
     url: signedPrescriptionUrl(order.prescriptionPublicId),
     expiresInSeconds: 600,
+  });
+});
+
+/* ---------- WhatsApp session (admin) ---------- */
+
+const requireWaGateway = (_req, _res, next) => {
+  if (!waGatewayEnabled) {
+    return next(new ApiError(503, 'WhatsApp is not configured on the server.'));
+  }
+  next();
+};
+
+const noStore = (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+};
+
+const whatsappStatus = asyncHandler(async (_req, res) => {
+  const [session, pendingCount] = await Promise.all([
+    fetchWhatsAppSession(),
+    countUnnotifiedOrders(),
+  ]);
+  res.json({ session, pendingCount });
+});
+
+const whatsappConnect = asyncHandler(async (req, res) => {
+  let session;
+
+  try {
+    session = await normalizeGatewaySession(
+      await gatewayRequest(config.whatsappGateway.paths.connect, {
+        timeoutMs: config.whatsappGateway.connectTimeoutMs,
+      }),
+    );
+  } catch (error) {
+    throw new ApiError(502, error?.message || 'A WhatsApp session could not be started.');
+  }
+
+  // Some gateways only acknowledge the connect call; the QR arrives on status.
+  if (session.state === 'disconnected') {
+    session = await fetchWhatsAppSession();
+    if (session.state === 'disconnected') session = { ...session, state: 'connecting' };
+  }
+
+  rememberSession(session);
+
+  console.info('[whatsapp] Session connect requested', {
+    by: req.user._id.toString(),
+    state: session.state,
+  });
+
+  res.json({ session, pendingCount: await countUnnotifiedOrders() });
+});
+
+const whatsappLogout = asyncHandler(async (req, res) => {
+  try {
+    await gatewayRequest(config.whatsappGateway.paths.logout);
+  } catch (error) {
+    if (!(error instanceof GatewayError) || error.status !== 404) {
+      throw new ApiError(502, error?.message || 'WhatsApp could not be disconnected.');
+    }
+  }
+
+  const session = buildSession({ state: 'disconnected' });
+  rememberSession(session);
+
+  console.info('[whatsapp] Session logged out', { by: req.user._id.toString() });
+
+  res.json({ session, pendingCount: await countUnnotifiedOrders() });
+});
+
+const whatsappTest = asyncHandler(async (req, res) => {
+  const { phone } = whatsappTestInput.parse(req.body);
+
+  const text = [
+    'Test message from the Lotus Pharmacy console.',
+    `Sent by ${sanitizeForMessage(req.user.name, 40)}.`,
+    'Automated order confirmations and status updates are working.',
+  ].join('\n');
+
+  const sent = await sendWhatsAppText(customerChatId(phone), text, 'admin-test');
+  if (!sent) {
+    throw new ApiError(
+      502,
+      'The test message was not delivered. Make sure WhatsApp is connected, then try again in a minute.',
+    );
+  }
+
+  res.json({ message: 'Test message sent.' });
+});
+
+const whatsappRetryPending = asyncHandler(async (_req, res) => {
+  const orders = await Order.find({
+    status: 'pending_whatsapp',
+    customerNotifiedAt: null,
+    createdAt: { $gte: new Date(Date.now() - WA_RETRY_WINDOW_MS) },
+  })
+    .sort({ createdAt: 1 })
+    .limit(WA_RETRY_BATCH)
+    .populate('branch', 'name shortName phone');
+
+  let sent = 0;
+
+  // Sequential on purpose: a burst of parallel sends is the fastest way to get
+  // a linked number flagged.
+  for (const order of orders) {
+    if (!order.branch) continue;
+    if (await dispatchOrderNotifications(order, order.branch, { includeBranchAlert: false })) {
+      sent += 1;
+    }
+  }
+
+  res.json({
+    attempted: orders.length,
+    sent,
+    pendingCount: await countUnnotifiedOrders(),
   });
 });
 
@@ -1783,19 +2174,16 @@ const deleteProductUpload = asyncHandler(async (req, res) => {
   res.json({ message: 'Asset deleted.' });
 });
 
-/* ================================================================== */
-/*  10. ROUTES                                                         */
-/* ================================================================== */
+
 
 const limiterOptions = { standardHeaders: true, legacyHeaders: false };
 
 const globalLimiter = rateLimit({ windowMs: 60 * 1000, max: 300, ...limiterOptions });
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, ...limiterOptions });
-// Tightened: every accepted order now sends WhatsApp messages to a
-// caller-supplied number, so this limiter is an anti-spam control, not just
-// a load control.
 const writeLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 12, ...limiterOptions });
 const uploadLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 12, ...limiterOptions });
+const waSessionLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, ...limiterOptions });
+const waActionLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 20, ...limiterOptions });
 
 const authRouter = express.Router();
 authRouter.get('/csrf', getCsrf);
@@ -1824,7 +2212,7 @@ orderRouter.post('/', writeLimiter, optionalAuth, createOrder);
 orderRouter.get('/mine', protect, listMyOrders);
 orderRouter.get('/', protect, adminOnly, listAllOrders);
 orderRouter.patch('/:id/status', protect, adminOnly, updateOrderStatus);
-// Retained for older clients; the current frontend no longer calls it.
+orderRouter.post('/:id/notify', protect, adminOnly, waActionLimiter, resendOrderNotification);
 orderRouter.post('/:id/whatsapp-opened', optionalAuth, markWhatsAppOpened);
 orderRouter.get('/:id/prescription', protect, getPrescriptionForOrder);
 
@@ -1854,10 +2242,36 @@ uploadRouter.post(
 
 const adminRouter = express.Router();
 adminRouter.get('/stats', protect, adminOnly, adminStats);
+adminRouter.get('/whatsapp/status', protect, adminOnly, waSessionLimiter, noStore, whatsappStatus);
+adminRouter.post(
+  '/whatsapp/connect',
+  protect,
+  adminOnly,
+  waActionLimiter,
+  requireWaGateway,
+  noStore,
+  whatsappConnect,
+);
+adminRouter.post(
+  '/whatsapp/logout',
+  protect,
+  adminOnly,
+  waActionLimiter,
+  requireWaGateway,
+  noStore,
+  whatsappLogout,
+);
+adminRouter.post('/whatsapp/test', protect, adminOnly, waActionLimiter, requireWaGateway, whatsappTest);
+adminRouter.post(
+  '/whatsapp/retry-pending',
+  protect,
+  adminOnly,
+  waActionLimiter,
+  requireWaGateway,
+  whatsappRetryPending,
+);
 
-/* ================================================================== */
-/*  11. APP                                                            */
-/* ================================================================== */
+
 
 const app = express();
 
@@ -1865,7 +2279,8 @@ app.set('trust proxy', config.trustProxy);
 app.disable('x-powered-by');
 
 app.use((req, res, next) => {
-  req.requestId = req.get('x-request-id') || crypto.randomUUID();
+  const incoming = req.get('x-request-id');
+  req.requestId = incoming && /^[A-Za-z0-9_-]{8,64}$/.test(incoming) ? incoming : crypto.randomUUID();
   res.setHeader('x-request-id', req.requestId);
   next();
 });
@@ -1910,7 +2325,7 @@ app.get('/api/ready', (_req, res) => {
     status: dbReady ? 'ready' : 'not_ready',
     db: dbReady ? 'connected' : 'disconnected',
     uploads: cloudinaryEnabled ? 'ready' : 'disabled',
-    whatsapp: openWaEnabled ? 'configured' : 'disabled',
+    whatsapp: waGatewayEnabled ? waLastKnown.state : 'disabled',
   });
 });
 
@@ -1925,7 +2340,6 @@ app.use((req, _res, next) =>
   next(new ApiError(404, `No route for ${req.method} ${req.originalUrl}`)),
 );
 
-// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Something went wrong.';
@@ -1945,9 +2359,18 @@ app.use((err, req, res, _next) => {
     details = Object.fromEntries(
       Object.entries(err.errors).map(([field, error]) => [field, error.message]),
     );
+  } else if (err.name === 'VersionError') {
+    statusCode = 409;
+    message = 'This order was changed by someone else. Refresh and try again.';
   } else if (err.name === 'CastError') {
     statusCode = 400;
     message = 'That id is not valid.';
+  } else if (err.type === 'entity.parse.failed') {
+    statusCode = 400;
+    message = 'The request body is not valid JSON.';
+  } else if (err.type === 'entity.too.large') {
+    statusCode = 413;
+    message = 'The request body is too large.';
   } else if (err.code === 11000) {
     statusCode = 409;
     if (err.keyPattern?.idempotencyKey) {
@@ -1965,7 +2388,7 @@ app.use((err, req, res, _next) => {
       message: err.message,
       stack: isProd ? undefined : err.stack,
     });
-    if (isProd) message = 'Something went wrong on our side.';
+    if (isProd && statusCode === 500) message = 'Something went wrong on our side.';
   }
 
   res.status(statusCode).json({
@@ -1975,9 +2398,7 @@ app.use((err, req, res, _next) => {
   });
 });
 
-/* ================================================================== */
-/*  12. SEEDING + STARTUP                                              */
-/* ================================================================== */
+
 
 async function seedAdmin() {
   if (isProd || !config.allowDevSeed) return;
@@ -2014,20 +2435,6 @@ async function seedAdmin() {
   }
 }
 
-async function verifyWhatsAppSession() {
-  if (!waClient) return;
-
-  try {
-    await waClient.auth();
-    console.log(`[whatsapp] Gateway reachable, session "${config.openwa.sessionId}".`);
-  } catch (error) {
-    console.warn(
-      '[whatsapp] Gateway check failed — messages will be attempted anyway:',
-      error?.message,
-    );
-  }
-}
-
 let server;
 
 async function start() {
@@ -2039,7 +2446,12 @@ async function start() {
   console.log('[db] Connected.');
 
   await seedAdmin();
-  await verifyWhatsAppSession();
+
+  if (waGatewayEnabled) {
+    fetchWhatsAppSession()
+      .then((session) => console.log(`[whatsapp] Gateway session state: ${session.state}`))
+      .catch(() => {});
+  }
 
   server = app.listen(config.port, () => {
     console.log(`[server] Listening on :${config.port} (${config.env})`);

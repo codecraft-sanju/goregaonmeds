@@ -39,11 +39,14 @@ import {
   Phone,
   PhoneCall,
   Plus,
+  QrCode,
   Receipt,
   RefreshCw,
   Search,
+  Send,
   Shield,
   ShoppingCart,
+  Smartphone,
   Sparkles,
   Store,
   Trash2,
@@ -54,14 +57,14 @@ import {
 } from 'lucide-react';
 
 /* ================================================================== */
-/*  Types                                                              */
+/*  Types                                                             */
 /* ================================================================== */
 
 type BuyType = 'full' | 'loose';
 type LocateStatus = 'idle' | 'loading' | 'success' | 'error';
 type Role = 'customer' | 'admin';
 type ToastTone = 'success' | 'error';
-type AdminTab = 'orders' | 'catalogue' | 'branches';
+type AdminTab = 'orders' | 'catalogue' | 'branches' | 'whatsapp';
 type OrderRange = 'today' | 'week' | 'month' | 'all';
 
 type OrderStatus =
@@ -216,6 +219,17 @@ interface AdminStats {
   branchPerformance: BranchPerformance[];
 }
 
+interface WhatsAppSession {
+  configured: boolean;
+  reachable: boolean;
+  state: string;
+  phone: string;
+  name: string;
+  qr: string | null;
+  message: string;
+  checkedAt: string;
+}
+
 interface Toast {
   id: number;
   text: string;
@@ -225,7 +239,7 @@ interface Toast {
 type FieldErrors = Record<string, string | undefined>;
 
 /* ================================================================== */
-/*  Constants                                                          */
+/*  Constants                                                         */
 /* ================================================================== */
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/$/, '');
@@ -284,16 +298,8 @@ const ORDER_RANGE_LABEL: Record<OrderRange, string> = {
   all: 'All time',
 };
 
-const AVATAR_TONES = [
-  'bg-emerald-100 text-emerald-700',
-  'bg-sky-100 text-sky-700',
-  'bg-rose-100 text-rose-700',
-  'bg-violet-100 text-violet-700',
-  'bg-amber-100 text-amber-700',
-];
-
 /* ================================================================== */
-/*  Helpers                                                            */
+/*  Helpers                                                           */
 /* ================================================================== */
 
 const cx = (...parts: Array<string | false | null | undefined>) =>
@@ -340,9 +346,6 @@ const initialsOf = (name: string) =>
     .map((part) => part[0] || '')
     .join('')
     .toUpperCase() || '?';
-
-const branchIdOf = (branch: OrderRecord['branch']) =>
-  branch && '_id' in branch ? branch._id : branch?.id || '';
 
 function distanceInKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const earthRadiusKm = 6371;
@@ -460,7 +463,7 @@ function availableFullPacks(medicine: Medicine, branchId?: string): number | nul
 }
 
 /* ================================================================== */
-/*  API                                                                */
+/*  API                                                               */
 /* ================================================================== */
 
 class ApiError extends Error {
@@ -603,7 +606,7 @@ async function revertPrescription(uploadToken: string) {
 }
 
 /* ================================================================== */
-/*  Hooks                                                              */
+/*  Hooks                                                             */
 /* ================================================================== */
 
 function useDebouncedValue<T>(value: T, delay: number): T {
@@ -717,7 +720,7 @@ function useOutsideClick<T extends HTMLElement>(
 }
 
 /* ================================================================== */
-/*  Primitive components                                               */
+/*  Primitive components                                             */
 /* ================================================================== */
 
 const LotusMark = memo(function LotusMark({
@@ -1904,7 +1907,7 @@ function PrescriptionFilePicker({
 }
 
 /* ================================================================== */
-/*  Auth + account                                                     */
+/*  Auth + account                                                   */
 /* ================================================================== */
 
 function AuthSheet({
@@ -2334,7 +2337,7 @@ function AccountSheet({
 }
 
 /* ================================================================== */
-/*  Admin forms                                                        */
+/*  Admin forms                                                      */
 /* ================================================================== */
 
 const EMPTY_MEDICINE = {
@@ -3210,7 +3213,7 @@ function BranchForm({
 }
 
 /* ================================================================== */
-/*  Admin                                                              */
+/*  Admin                                                            */
 /* ================================================================== */
 
 const StatCard = memo(function StatCard({
@@ -3283,12 +3286,14 @@ function OrderDetailSheet({
   onClose,
   onStatusChange,
   onMessageCustomer,
+  onResendNotification,
   notify,
 }: {
   order: OrderRecord | null;
   onClose: () => void;
   onStatusChange: (order: OrderRecord, status: OrderStatus) => void;
   onMessageCustomer: (order: OrderRecord) => void;
+  onResendNotification: (order: OrderRecord) => void;
   notify: (text: string, tone?: ToastTone) => void;
 }) {
   const [openingPrescription, setOpeningPrescription] = useState(false);
@@ -3442,24 +3447,35 @@ function OrderDetailSheet({
             WhatsApp customer
           </button>
 
+          <button
+            type="button"
+            onClick={() => onResendNotification(order)}
+            className="lp-press flex items-center justify-center gap-2 rounded-2xl bg-[#0B1220]/[0.06] py-3.5 text-[13.5px] font-semibold text-[#0B1220] hover:bg-[#0B1220]/10"
+          >
+            <RefreshCw size={16} />
+            Resend Notification
+          </button>
+
           {nextStatuses.length > 0 && (
-            <SelectShell
-              id={`detail-status-${order._id}`}
-              label="Move order to"
-              value={order.status}
-              onChange={(value) =>
-                onStatusChange(order, value as OrderStatus)
-              }
-            >
-              <option value={order.status}>
-                {ORDER_STATUS_LABEL[order.status]}
-              </option>
-              {nextStatuses.map((status) => (
-                <option key={status} value={status}>
-                  Move to {ORDER_STATUS_LABEL[status]}
+            <div className="sm:col-span-2 mt-2">
+              <SelectShell
+                id={`detail-status-${order._id}`}
+                label="Move order to"
+                value={order.status}
+                onChange={(value) =>
+                  onStatusChange(order, value as OrderStatus)
+                }
+              >
+                <option value={order.status}>
+                  {ORDER_STATUS_LABEL[order.status]}
                 </option>
-              ))}
-            </SelectShell>
+                {nextStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    Move to {ORDER_STATUS_LABEL[status]}
+                  </option>
+                ))}
+              </SelectShell>
+            </div>
           )}
         </div>
       </div>
@@ -3517,6 +3533,13 @@ function AdminPanel({
 
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const [showBranchForm, setShowBranchForm] = useState(false);
+
+  // WhatsApp Gateway States
+  const [waSession, setWaSession] = useState<WhatsAppSession | null>(null);
+  const [waPendingCount, setWaPendingCount] = useState<number>(0);
+  const [waLoading, setWaLoading] = useState(false);
+  const [waTestPhone, setWaTestPhone] = useState('');
+  const [waProcessing, setWaProcessing] = useState(false);
 
   useOutsideClick(menuOpen, menuRef, () => setMenuOpen(false));
   useEscapeKey(menuOpen, () => setMenuOpen(false));
@@ -3620,6 +3643,19 @@ function AdminPanel({
     [debouncedMedicineSearch, notify],
   );
 
+  const loadWaStatus = useCallback(async () => {
+    setWaLoading(true);
+    try {
+      const data = await api<{ session: WhatsAppSession; pendingCount: number }>('/api/admin/whatsapp/status');
+      setWaSession(data.session);
+      setWaPendingCount(data.pendingCount);
+    } catch (error) {
+      notify(errorText(error, 'WhatsApp status could not be fetched.'), 'error');
+    } finally {
+      setWaLoading(false);
+    }
+  }, [notify]);
+
   useEffect(() => {
     loadStats();
   }, [loadStats]);
@@ -3631,6 +3667,25 @@ function AdminPanel({
   useEffect(() => {
     if (tab === 'catalogue') loadMedicines('reset');
   }, [tab, loadMedicines]);
+
+  useEffect(() => {
+    if (tab === 'whatsapp') {
+      loadWaStatus();
+    }
+  }, [tab, loadWaStatus]);
+
+  // Polling WhatsApp status when connecting or waiting for QR code
+  useEffect(() => {
+    if (tab !== 'whatsapp' || !waSession) return;
+    
+    let interval: number;
+    if (waSession.state === 'qr' || waSession.state === 'connecting') {
+      interval = window.setInterval(() => {
+        loadWaStatus();
+      }, 5000);
+    }
+    return () => window.clearInterval(interval);
+  }, [tab, waSession?.state, loadWaStatus]);
 
   useEffect(() => {
     setOrdersPage(1);
@@ -3725,8 +3780,6 @@ function AdminPanel({
     }
   };
 
-  // Staff-initiated chat. Automated order and status messages are sent by the
-  // server; this opens a real conversation window for anything ad hoc.
   const openWhatsApp = useCallback((phone: string, message: string) => {
     const url = `https://wa.me/${digitsOnly(phone)}?text=${encodeURIComponent(
       message,
@@ -3736,7 +3789,7 @@ function AdminPanel({
   }, []);
 
   const messageCustomer = useCallback(
-    (order: OrderRecord) => {
+    async (order: OrderRecord) => {
       const message = [
         `Hello ${sanitizeForMessage(order.customer.name, 40)}, this is ${
           order.branch?.shortName ||
@@ -3749,10 +3802,86 @@ function AdminPanel({
           : 'We are reviewing your prescription and will confirm the bill.',
       ].join('\n');
 
+      // Try marking as opened silently, don't break if it fails
+      try {
+        await api(`/api/orders/${order._id}/whatsapp-opened`, { method: 'POST' });
+      } catch (err) {}
+
       openWhatsApp(`91${digitsOnly(order.customer.phone)}`, message);
     },
     [openWhatsApp],
   );
+
+  const resendNotification = async (order: OrderRecord) => {
+    try {
+      await api(`/api/orders/${order._id}/notify`, { method: 'POST' });
+      notify('WhatsApp notification resent successfully.');
+    } catch (error) {
+      notify(errorText(error, 'Failed to resend notification.'), 'error');
+    }
+  };
+
+  // WhatsApp Gateway Actions
+  const connectWa = async () => {
+    setWaProcessing(true);
+    try {
+      const data = await api<{ session: WhatsAppSession; pendingCount: number }>('/api/admin/whatsapp/connect', { method: 'POST' });
+      setWaSession(data.session);
+      setWaPendingCount(data.pendingCount);
+      notify('WhatsApp connection initiated.');
+    } catch (error) {
+      notify(errorText(error, 'Failed to initiate WhatsApp connection.'), 'error');
+    } finally {
+      setWaProcessing(false);
+    }
+  };
+
+  const logoutWa = async () => {
+    setWaProcessing(true);
+    try {
+      const data = await api<{ session: WhatsAppSession; pendingCount: number }>('/api/admin/whatsapp/logout', { method: 'POST' });
+      setWaSession(data.session);
+      setWaPendingCount(data.pendingCount);
+      notify('WhatsApp disconnected.');
+    } catch (error) {
+      notify(errorText(error, 'Failed to disconnect WhatsApp.'), 'error');
+    } finally {
+      setWaProcessing(false);
+    }
+  };
+
+  const testWa = async () => {
+    if (!waTestPhone || digitsOnly(waTestPhone).length !== 10) {
+      notify('Please enter a valid 10-digit Indian phone number.', 'error');
+      return;
+    }
+    setWaProcessing(true);
+    try {
+      const data = await api<{ message: string }>('/api/admin/whatsapp/test', {
+        method: 'POST',
+        body: JSON.stringify({ phone: waTestPhone }),
+      });
+      notify(data.message);
+      setWaTestPhone('');
+    } catch (error) {
+      notify(errorText(error, 'Failed to send test message.'), 'error');
+    } finally {
+      setWaProcessing(false);
+    }
+  };
+
+  const retryPendingWa = async () => {
+    setWaProcessing(true);
+    try {
+      const data = await api<{ attempted: number; sent: number; pendingCount: number }>('/api/admin/whatsapp/retry-pending', { method: 'POST' });
+      setWaPendingCount(data.pendingCount);
+      notify(`Retried ${data.attempted} messages. Sent ${data.sent}.`);
+    } catch (error) {
+      notify(errorText(error, 'Failed to retry messages.'), 'error');
+    } finally {
+      setWaProcessing(false);
+    }
+  };
 
   const tabs: Array<{
     value: AdminTab;
@@ -3773,6 +3902,11 @@ function AdminPanel({
       value: 'branches',
       label: 'Branches',
       icon: <Store size={16} strokeWidth={2.3} />,
+    },
+    {
+      value: 'whatsapp',
+      label: 'WhatsApp',
+      icon: <MessageCircle size={16} strokeWidth={2.3} />,
     },
   ];
 
@@ -4502,6 +4636,165 @@ function AdminPanel({
             )}
           </section>
         )}
+
+        {tab === 'whatsapp' && (
+          <section className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-[20px] font-semibold">WhatsApp Gateway Configuration</h2>
+                <p className="mt-1 text-[13px] text-[#0B1220]/55">
+                  Manage the WhatsApp connection for automated order updates.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={loadWaStatus}
+                disabled={waLoading}
+                className="lp-press flex items-center gap-2 rounded-full border border-[#0B1220]/10 bg-white px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
+              >
+                <RefreshCw size={15} className={waLoading ? "animate-spin" : ""} />
+                Refresh Status
+              </button>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+              <div className="space-y-6">
+                <div className="rounded-[28px] border border-[#0B1220]/[0.06] bg-white p-6 shadow-[0_1px_2px_rgba(11,18,32,0.06)] md:p-8">
+                  <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold">
+                    <Smartphone size={18} className="text-[#0B7A6B]" />
+                    Connection Status
+                  </h3>
+                  
+                  {waLoading && !waSession ? (
+                    <div className="flex justify-center py-10">
+                      <Loader2 size={24} className="animate-spin text-[#0B7A6B]" />
+                    </div>
+                  ) : !waSession || !waSession.configured ? (
+                     <div className="rounded-[20px] bg-rose-50 p-6 text-center text-rose-700">
+                        <AlertCircle size={32} className="mx-auto mb-3" />
+                        <p className="font-semibold">WhatsApp is not configured on the server.</p>
+                        <p className="mt-1 text-[13px]">{waSession?.message || 'Set WA_GATEWAY_URL and WA_API_KEY in the environment variables.'}</p>
+                     </div>
+                  ) : waSession.state === 'qr' && waSession.qr ? (
+                    <div className="text-center">
+                      <div className="mx-auto mb-4 inline-block overflow-hidden rounded-[20px] border border-[#0B1220]/10 bg-white p-4 shadow-sm">
+                        <img src={waSession.qr} alt="WhatsApp QR Code" className="h-64 w-64" />
+                      </div>
+                      <p className="text-[14px] font-semibold text-[#0B1220]">Scan this QR code in WhatsApp</p>
+                      <p className="mt-1 text-[13px] text-[#0B1220]/55">Open WhatsApp &gt; Linked Devices &gt; Link a Device</p>
+                      <p className="mt-4 text-[12px] text-amber-600 font-medium bg-amber-50 py-2 rounded-xl">Status auto-refreshes every 5 seconds.</p>
+                    </div>
+                  ) : waSession.state === 'connected' ? (
+                    <div className="rounded-[24px] bg-[#E6F4F1] p-6 text-center">
+                      <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-white text-[#0B7A6B] shadow-sm">
+                        <CheckCircle2 size={28} />
+                      </div>
+                      <p className="text-[17px] font-semibold text-[#0B7A6B]">Connected & Ready</p>
+                      <p className="mt-1 text-[14px] text-[#0A6A5D]">Linked as {waSession.name} (+{waSession.phone})</p>
+                      
+                      <div className="mt-6 flex justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={logoutWa}
+                          disabled={waProcessing}
+                          className="lp-press flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-rose-600 shadow-sm disabled:opacity-60"
+                        >
+                          {waProcessing ? <Loader2 size={16} className="animate-spin" /> : <LogOut size={16} />}
+                          Logout Device
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-[20px] bg-[#0B1220]/[0.04] p-6 text-center">
+                      <Smartphone size={32} className="mx-auto mb-3 text-[#0B1220]/40" />
+                      <p className="font-semibold">Current State: {waSession.state}</p>
+                      {waSession.message && <p className="mt-1 text-[13px] text-[#0B1220]/55">{waSession.message}</p>}
+                      
+                      <div className="mt-6">
+                        <button
+                          type="button"
+                          onClick={connectWa}
+                          disabled={waProcessing || waSession.state === 'connecting'}
+                          className="lp-press inline-flex items-center gap-2 rounded-full bg-[#0B7A6B] px-6 py-3 text-[14px] font-semibold text-white shadow-sm disabled:opacity-60"
+                        >
+                          {waProcessing || waSession.state === 'connecting' ? <Loader2 size={16} className="animate-spin" /> : <QrCode size={16} />}
+                          Generate QR Code
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[28px] border border-[#0B1220]/[0.06] bg-white p-6 shadow-[0_1px_2px_rgba(11,18,32,0.06)]">
+                   <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold">
+                     <Clock size={18} className="text-amber-600" />
+                     Pending Outbound Messages
+                   </h3>
+                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-amber-50/50 border border-amber-100 p-5">
+                      <div>
+                        <p className="text-[20px] font-semibold text-amber-700">{waPendingCount}</p>
+                        <p className="text-[13px] text-amber-700/70">Unconfirmed initial order alerts in queue</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={retryPendingWa}
+                        disabled={waProcessing || waPendingCount === 0 || waSession?.state !== 'connected'}
+                        className="lp-press flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-50"
+                      >
+                        {waProcessing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                        Retry All
+                      </button>
+                   </div>
+                   <p className="mt-3 text-[12.5px] text-[#0B1220]/50">
+                     If the gateway was disconnected, automated confirmation messages may be waiting. Click "Retry All" to flush the queue. (Max 20 per attempt to prevent spam limits).
+                   </p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                 <div className="rounded-[28px] border border-[#0B1220]/[0.06] bg-white p-6 shadow-[0_1px_2px_rgba(11,18,32,0.06)]">
+                    <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold">
+                      <Send size={18} className="text-[#0B7A6B]" />
+                      Send Test Message
+                    </h3>
+                    <p className="mb-4 text-[13px] text-[#0B1220]/60">
+                      Verify that the WhatsApp connection is working correctly by sending a test message to your own number.
+                    </p>
+                    <div className="space-y-3">
+                      <Field
+                        name="testPhone"
+                        label="Mobile number"
+                        type="tel"
+                        inputMode="numeric"
+                        placeholder="10-digit number"
+                        value={waTestPhone}
+                        onChange={(e) => setWaTestPhone(digitsOnly(e.target.value).slice(0, 10))}
+                        maxLength={10}
+                      />
+                      <button
+                        type="button"
+                        onClick={testWa}
+                        disabled={waProcessing || waTestPhone.length < 10 || waSession?.state !== 'connected'}
+                        className="lp-press w-full flex items-center justify-center gap-2 rounded-xl bg-[#0B1220] py-3 text-[13.5px] font-semibold text-white disabled:opacity-60"
+                      >
+                        {waProcessing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                        Send Test Ping
+                      </button>
+                    </div>
+                 </div>
+
+                 <div className="rounded-[24px] bg-[#E6F4F1] p-5">
+                    <h4 className="font-semibold text-[#0B7A6B] text-[14px]">Best Practices</h4>
+                    <ul className="mt-3 space-y-2 text-[12.5px] text-[#0A6A5D]/80 list-disc pl-4">
+                      <li>Keep your linked phone connected to the internet.</li>
+                      <li>Avoid sending bulk manual messages too fast.</li>
+                      <li>If QR code fails to generate, check if the session is stuck in "connecting" and refresh.</li>
+                    </ul>
+                 </div>
+              </div>
+            </div>
+          </section>
+        )}
       </main>
 
       <OrderDetailSheet
@@ -4509,6 +4802,7 @@ function AdminPanel({
         onClose={() => setSelectedOrder(null)}
         onStatusChange={changeOrderStatus}
         onMessageCustomer={messageCustomer}
+        onResendNotification={resendNotification}
         notify={notify}
       />
     </div>
@@ -4516,7 +4810,7 @@ function AdminPanel({
 }
 
 /* ================================================================== */
-/*  Global CSS                                                         */
+/*  Global CSS                                                       */
 /* ================================================================== */
 
 const GLOBAL_CSS = `
@@ -4582,8 +4876,6 @@ const GLOBAL_CSS = `
     }
   }
 `;
-
-
 
 export default function Page() {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -5853,7 +6145,7 @@ export default function Page() {
           </div>
         )}
       </main>
-{activeBranches.length > 0 && view === 'store' && (
+      {activeBranches.length > 0 && view === 'store' && (
         <StoreMap branches={activeBranches} />
       )}
       <section className="bg-white py-16 lg:py-20">
