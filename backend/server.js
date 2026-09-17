@@ -2557,64 +2557,54 @@ app.use((err, req, res, _next) => {
 
 
 async function seedAdmin() {
-  console.log('\n--- 🟢 DEBUG: SEED ADMIN CHECK START ---');
-  console.log('isProd:', isProd);
-  console.log('allowDevSeed (from .env):', config.allowDevSeed);
-
-  if (isProd || !config.allowDevSeed) {
-    console.log('❌ DEBUG: Admin seed skipped (Ya toh production hai ya ALLOW_DEV_SEED false hai)');
-    return;
-  }
-
+  console.log('\n--- 🟢 SYSTEM: ADMIN SEEDING PROCESS START ---');
+  
+  // 1. Check if required credentials exist in Environment Variables
   if (!config.seedAdmin.email || !config.seedAdmin.password) {
-    console.log('❌ DEBUG: Admin seed skipped (Email ya password .env me missing hai)');
+    console.log('⏩ SKIPPED: SEED_ADMIN_EMAIL ya SEED_ADMIN_PASSWORD environment variables me nahi hain.');
     return;
   }
 
+  // 2. Security Check for Password Strength
   if (config.seedAdmin.password.length < 8) {
-    console.warn('❌ DEBUG: SEED_ADMIN_PASSWORD 8 character se chhota hai — skipping.');
+    console.warn('❌ FAILED: Admin password kam se kam 8 characters ka hona chahiye.');
     return;
   }
 
   try {
-    const email = config.seedAdmin.email.toLowerCase();
-    console.log(`🔎 DEBUG: Looking for admin user: ${email}`);
+    // 3. Normalize email to avoid case-sensitive duplicate issues
+    const email = config.seedAdmin.email.toLowerCase().trim();
+    console.log(`🔎 Searching database for Admin Email: ${email}`);
 
     const existing = await User.findOne({ email }).select('+tokenVersion');
 
+    // 4. Create Admin if it doesn't exist
     if (!existing) {
-      console.log('✅ DEBUG: Admin user DB me nahi mila. Naya user create kar rahe hain...');
+      console.log('⏳ Creating new Admin account...');
       await User.create({
         name: 'Pharmacy Admin',
         email,
-        phone: config.seedAdmin.phone,
+        phone: config.seedAdmin.phone || '9999999999',
         password: config.seedAdmin.password,
         role: 'admin',
       });
-      console.log(`🎉 [db] Dev admin created: ${email}`);
+      console.log(`🎉 SUCCESS: Admin account created successfully! You can now login with ${email}`);
       return;
     }
 
-    console.log('⚠️ DEBUG: Admin user pehle se DB me maujud hai.');
-    // IMPORTANT FIX: Agar user already exist karta hai, par aapne .env me password change kiya h,
-    // toh code usey update nahi kar raha tha. Niche wala block password force update karega.
-    let updated = false;
+    // 5. If user exists, force update to Admin role and reset password to match .env
+    console.log('⚠️ Account already exists. Ensuring Admin privileges and syncing password...');
     
-    if (existing.role !== 'admin') {
-      existing.role = 'admin';
-      updated = true;
-      console.log('🔄 DEBUG: User role "admin" me update kiya.');
-    }
-
-    // Force update password for testing
+    existing.role = 'admin';
     existing.password = config.seedAdmin.password; 
-    await existing.save(); // Ye pre('save') hook call karega aur naya hash banayega
-    console.log('🔑 DEBUG: Admin ka password .env ke hisab se DB me override kar diya gaya hai.');
+    await existing.save(); // Triggers the bcrypt hash automatically
+    
+    console.log(`✅ SUCCESS: Account (${email}) synchronized successfully!`);
 
   } catch (error) {
-    console.error('❌ [db] Dev admin seed failed:', error.message);
+    console.error('❌ FATAL ERROR during Admin Seeding:', error.message);
   }
-  console.log('--- 🟢 DEBUG: SEED ADMIN CHECK END ---\n');
+  console.log('--- 🟢 SYSTEM: ADMIN SEEDING PROCESS END ---\n');
 }
 
 let server;
