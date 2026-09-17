@@ -1441,18 +1441,41 @@ const register = asyncHandler(async (req, res) => {
 });
 
 const login = asyncHandler(async (req, res) => {
-  const parsed = loginSchema.parse(req.body);
-  const user = await User.findOne({ email: parsed.email.toLowerCase() })
-    .select('+password +tokenVersion');
+  console.log('\n--- 🔵 DEBUG: LOGIN ATTEMPT START ---');
+  console.log('1. Incoming Request Body:', req.body);
 
-  if (!user || !user.isActive || !(await user.comparePassword(parsed.password))) {
+  const parsed = loginSchema.parse(req.body);
+  const email = parsed.email.toLowerCase();
+  console.log(`2. Parsed & Lowercased Email: ${email}`);
+
+  const user = await User.findOne({ email }).select('+password +tokenVersion');
+
+  if (!user) {
+    console.log('3. ❌ Result: User DB me nahi mila is email se.');
     throw new ApiError(401, 'Email or password is incorrect.');
   }
+  console.log('3. ✅ Result: User DB me mil gaya.');
+
+  if (!user.isActive) {
+    console.log('4. ❌ Result: User account inactive hai.');
+    throw new ApiError(401, 'Email or password is incorrect.');
+  }
+  console.log('4. ✅ Result: User account active hai.');
+
+  const isPasswordMatch = await user.comparePassword(parsed.password);
+  console.log(`5. Password Match Status: ${isPasswordMatch}`);
+
+  if (!isPasswordMatch) {
+    console.log('6. ❌ Result: Password database ke hash se match NAHI hua.');
+    throw new ApiError(401, 'Email or password is incorrect.');
+  }
+
+  console.log('6. 🎉 ✅ Result: Login Successful! Token generate ho raha hai.');
+  console.log('--- 🔵 DEBUG: LOGIN ATTEMPT END ---\n');
 
   user.lastLoginAt = new Date();
   await user.save({ validateBeforeSave: false });
 
-  // 🟢 Token ko JSON me bhej rahe hain
   res.json({ user: user.toPublic(), token: signToken(user) });
 });
 
@@ -2531,19 +2554,33 @@ app.use((err, req, res, _next) => {
 
 
 async function seedAdmin() {
-  if (isProd || !config.allowDevSeed) return;
-  if (!config.seedAdmin.email || !config.seedAdmin.password) return;
+  console.log('\n--- 🟢 DEBUG: SEED ADMIN CHECK START ---');
+  console.log('isProd:', isProd);
+  console.log('allowDevSeed (from .env):', config.allowDevSeed);
+
+  if (isProd || !config.allowDevSeed) {
+    console.log('❌ DEBUG: Admin seed skipped (Ya toh production hai ya ALLOW_DEV_SEED false hai)');
+    return;
+  }
+
+  if (!config.seedAdmin.email || !config.seedAdmin.password) {
+    console.log('❌ DEBUG: Admin seed skipped (Email ya password .env me missing hai)');
+    return;
+  }
 
   if (config.seedAdmin.password.length < 8) {
-    console.warn('[db] SEED_ADMIN_PASSWORD is shorter than 8 characters — skipping admin seed.');
+    console.warn('❌ DEBUG: SEED_ADMIN_PASSWORD 8 character se chhota hai — skipping.');
     return;
   }
 
   try {
     const email = config.seedAdmin.email.toLowerCase();
+    console.log(`🔎 DEBUG: Looking for admin user: ${email}`);
+
     const existing = await User.findOne({ email }).select('+tokenVersion');
 
     if (!existing) {
+      console.log('✅ DEBUG: Admin user DB me nahi mila. Naya user create kar rahe hain...');
       await User.create({
         name: 'Pharmacy Admin',
         email,
@@ -2551,18 +2588,30 @@ async function seedAdmin() {
         password: config.seedAdmin.password,
         role: 'admin',
       });
-      console.log(`[db] Dev admin created: ${email}`);
+      console.log(`🎉 [db] Dev admin created: ${email}`);
       return;
     }
 
+    console.log('⚠️ DEBUG: Admin user pehle se DB me maujud hai.');
+    // IMPORTANT FIX: Agar user already exist karta hai, par aapne .env me password change kiya h,
+    // toh code usey update nahi kar raha tha. Niche wala block password force update karega.
+    let updated = false;
+    
     if (existing.role !== 'admin') {
       existing.role = 'admin';
-      await existing.save({ validateBeforeSave: false });
-      console.log(`[db] Dev user upgraded to admin: ${email}`);
+      updated = true;
+      console.log('🔄 DEBUG: User role "admin" me update kiya.');
     }
+
+    // Force update password for testing
+    existing.password = config.seedAdmin.password; 
+    await existing.save(); // Ye pre('save') hook call karega aur naya hash banayega
+    console.log('🔑 DEBUG: Admin ka password .env ke hisab se DB me override kar diya gaya hai.');
+
   } catch (error) {
-    console.error('[db] Dev admin seed failed:', error.message);
+    console.error('❌ [db] Dev admin seed failed:', error.message);
   }
+  console.log('--- 🟢 DEBUG: SEED ADMIN CHECK END ---\n');
 }
 
 let server;
