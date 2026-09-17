@@ -490,95 +490,6 @@ const isAbortError = (error: unknown) =>
     ? error.name === 'AbortError'
     : (error as Error)?.name === 'AbortError';
 
-// let csrfToken: string | null = null;
-// let csrfPromise: Promise<string> | null = null;
-
-// async function ensureCsrf(): Promise<string> {
-//   if (csrfToken) return csrfToken;
-//   if (csrfPromise) return csrfPromise;
-
-//   csrfPromise = fetch(`${API_URL}/api/auth/csrf`, {
-//     credentials: 'include',
-//   })
-//     .then(async (response) => {
-//       const data = await response.json();
-//       if (!response.ok || !data?.csrfToken) {
-//         throw new ApiError(response.status, data?.message || 'Security handshake failed.');
-//       }
-//       csrfToken = data.csrfToken;
-//       return csrfToken as string;
-//     })
-//     .finally(() => {
-//       csrfPromise = null;
-//     });
-
-//   return csrfPromise;
-// }
-
-// async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-//   const method = String(options.method || 'GET').toUpperCase();
-//   const writeRequest = !['GET', 'HEAD', 'OPTIONS'].includes(method);
-//   const headers: Record<string, string> = {
-//     ...((options.headers as Record<string, string>) || {}),
-//   };
-
-//   if (!(options.body instanceof FormData)) {
-//     headers['Content-Type'] = 'application/json';
-//   }
-
-//   if (writeRequest) {
-//     headers['X-CSRF-Token'] = await ensureCsrf();
-//   }
-
-//   const timeoutController = new AbortController();
-//   const timer = window.setTimeout(
-//     () => timeoutController.abort(),
-//     REQUEST_TIMEOUT_MS,
-//   );
-//   const callerSignal = options.signal;
-//   const onCallerAbort = () => timeoutController.abort();
-//   callerSignal?.addEventListener('abort', onCallerAbort);
-
-//   let response: Response;
-
-//   try {
-//     response = await fetch(`${API_URL}${path}`, {
-//       ...options,
-//       credentials: 'include',
-//       headers,
-//       signal: timeoutController.signal,
-//     });
-//   } catch (error) {
-//     if (callerSignal?.aborted) throw error;
-//     if (isAbortError(error)) {
-//       throw new ApiError(0, 'The server took too long to respond.');
-//     }
-//     throw new ApiError(0, 'Cannot reach the server. Check your connection.');
-//   } finally {
-//     window.clearTimeout(timer);
-//     callerSignal?.removeEventListener('abort', onCallerAbort);
-//   }
-
-//   const isJson = response.headers
-//     .get('content-type')
-//     ?.includes('application/json');
-//   const payload = isJson ? await response.json().catch(() => null) : null;
-
-//   if (!response.ok) {
-//     if (response.status === 403 && /security token/i.test(payload?.message || '')) {
-//       csrfToken = null;
-//     }
-//     throw new ApiError(
-//       response.status,
-//       payload?.message || 'Request failed.',
-//       payload?.details,
-//       payload?.requestId,
-//     );
-//   }
-
-//   return payload as T;
-// }
-
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     ...((options.headers as Record<string, string>) || {}),
@@ -786,7 +697,7 @@ function useOutsideClick<T extends HTMLElement>(
 }
 
 /* ================================================================== */
-/*  Primitive components                                             */
+/*  Primitive components                                              */
 /* ================================================================== */
 
 const LotusMark = memo(function LotusMark({
@@ -1973,6 +1884,111 @@ function PrescriptionFilePicker({
 }
 
 /* ================================================================== */
+/*  Onboarding & Quick Start Components                               */
+/* ================================================================== */
+
+function WelcomeGuide({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      variant="center"
+      width="md"
+      title="Welcome to Lotus Pharmacy! 👋"
+      description="Your neighborhood chemist, now on your phone. Here is how it works:"
+    >
+      <div className="mt-2 space-y-4">
+        <div className="flex gap-4 rounded-2xl bg-[#0B1220]/[0.03] p-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-[18px] shadow-sm">📍</div>
+          <div>
+            <h4 className="text-[14px] font-semibold text-[#0B1220]">1. Select your branch</h4>
+            <p className="mt-1 text-[13px] text-[#0B1220]/60">Pick the nearest store or let us detect your location for quick delivery.</p>
+          </div>
+        </div>
+        <div className="flex gap-4 rounded-2xl bg-[#0B1220]/[0.03] p-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-[18px] shadow-sm">💊</div>
+          <div>
+            <h4 className="text-[14px] font-semibold text-[#0B1220]">2. Build your basket</h4>
+            <p className="mt-1 text-[13px] text-[#0B1220]/60">Search for medicines, add them to your cart, or simply upload your doctor's prescription.</p>
+          </div>
+        </div>
+        <div className="flex gap-4 rounded-2xl bg-[#E6F4F1] p-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-[18px] shadow-sm text-[#25D366]"><MessageCircle size={20} /></div>
+          <div>
+            <h4 className="text-[14px] font-semibold text-[#0A6A5D]">3. WhatsApp Checkout</h4>
+            <p className="mt-1 text-[13px] text-[#0A6A5D]/80">Place the order and get instant confirmation, bill details, and tracking on your WhatsApp.</p>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="lp-press mt-6 w-full rounded-2xl bg-[#0B7A6B] py-3.5 text-[15px] font-semibold text-white hover:bg-[#0A6A5D]"
+        >
+          Got it, let's start!
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+function AdminQuickStart({ 
+  branchesCount, 
+  medicinesCount, 
+  waConnected, 
+  onNavigate 
+}: { 
+  branchesCount: number, 
+  medicinesCount: number, 
+  waConnected: boolean, 
+  onNavigate: (tab: AdminTab) => void 
+}) {
+  if (branchesCount > 0 && medicinesCount > 0 && waConnected) return null;
+
+  return (
+    <div className="mb-6 rounded-3xl bg-gradient-to-br from-[#0B1220] to-[#1a2b4c] p-6 text-white shadow-lg">
+      <h2 className="flex items-center gap-2 text-[18px] font-semibold">
+        <Sparkles size={18} className="text-amber-400" /> Let's finish setting up your Pharmacy
+      </h2>
+      <p className="mt-1.5 text-[13.5px] text-white/70">Complete these steps to start accepting orders from customers.</p>
+      
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <button onClick={() => onNavigate('branches')} className={cx("flex flex-col items-start rounded-2xl p-4 text-left transition-colors", branchesCount > 0 ? "bg-white/10" : "bg-white text-[#0B1220]")}>
+          <div className="flex w-full items-center justify-between">
+            <Store size={18} className={branchesCount > 0 ? "text-white/50" : "text-[#0B7A6B]"} />
+            {branchesCount > 0 && <CheckCircle2 size={16} className="text-emerald-400" />}
+          </div>
+          <h3 className="mt-3 text-[14px] font-semibold">1. Add a Branch</h3>
+          <p className={cx("mt-1 text-[12px]", branchesCount > 0 ? "text-white/50" : "text-[#0B1220]/60")}>{branchesCount > 0 ? `${branchesCount} branch(es) active` : 'Set up your physical store.'}</p>
+        </button>
+
+        <button onClick={() => onNavigate('catalogue')} className={cx("flex flex-col items-start rounded-2xl p-4 text-left transition-colors", medicinesCount > 0 ? "bg-white/10" : branchesCount > 0 ? "bg-white text-[#0B1220]" : "bg-white/5 opacity-60")}>
+          <div className="flex w-full items-center justify-between">
+            <Package size={18} className={medicinesCount > 0 ? "text-white/50" : "text-[#0B7A6B]"} />
+            {medicinesCount > 0 && <CheckCircle2 size={16} className="text-emerald-400" />}
+          </div>
+          <h3 className="mt-3 text-[14px] font-semibold">2. Add Medicines</h3>
+          <p className={cx("mt-1 text-[12px]", medicinesCount > 0 ? "text-white/50" : "text-[#0B1220]/60")}>{medicinesCount > 0 ? `${medicinesCount} items in catalog` : 'Add products to inventory.'}</p>
+        </button>
+
+        <button onClick={() => onNavigate('whatsapp')} className={cx("flex flex-col items-start rounded-2xl p-4 text-left transition-colors", waConnected ? "bg-white/10" : medicinesCount > 0 ? "bg-white text-[#0B1220]" : "bg-white/5 opacity-60")}>
+          <div className="flex w-full items-center justify-between">
+            <MessageCircle size={18} className={waConnected ? "text-white/50" : "text-[#25D366]"} />
+            {waConnected && <CheckCircle2 size={16} className="text-emerald-400" />}
+          </div>
+          <h3 className="mt-3 text-[14px] font-semibold">3. Link WhatsApp</h3>
+          <p className={cx("mt-1 text-[12px]", waConnected ? "text-white/50" : "text-[#0B1220]/60")}>{waConnected ? 'Gateway connected' : 'Scan QR for order alerts.'}</p>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
 /*  Auth + account                                                   */
 /* ================================================================== */
 
@@ -2011,45 +2027,6 @@ function AuthSheet({
     );
     setFormError(null);
   };
-
-  // const submit = async (event: React.FormEvent) => {
-  //   event.preventDefault();
-  //   if (busy) return;
-
-  //   setBusy(true);
-  //   setFormError(null);
-
-  //   try {
-  //     const path =
-  //       mode === 'login' ? '/api/auth/login' : '/api/auth/register';
-  //     const body =
-  //       mode === 'login'
-  //         ? {
-  //             email: form.email.trim(),
-  //             password: form.password,
-  //           }
-  //         : {
-  //             name: form.name.trim(),
-  //             email: form.email.trim(),
-  //             phone: form.phone,
-  //             password: form.password,
-  //           };
-
-  //     const data = await api<{ user: AuthUser }>(path, {
-  //       method: 'POST',
-  //       body: JSON.stringify(body),
-  //     });
-
-  //     onAuthenticated(data.user);
-  //   } catch (error) {
-  //     setFormError(errorText(error, 'That did not work. Try again.'));
-  //     if (error instanceof ApiError && error.details) {
-  //       setErrors(error.details);
-  //     }
-  //   } finally {
-  //     setBusy(false);
-  //   }
-  // };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -2758,22 +2735,25 @@ function MedicineForm({
           <div className="sm:col-span-2">
             <Field
               name="name"
-              label="Name"
+              label="Medicine Name"
               value={form.name}
               error={errors.name}
               onChange={handleInput}
               maxLength={120}
+              placeholder="e.g., Paracetamol 500mg, Crocin Advance"
             />
           </div>
 
           <div className="sm:col-span-2">
             <Field
               name="use"
-              label="What it treats"
+              label="What does it treat? (Symptoms/Use)"
               value={form.use}
               error={errors.use}
               onChange={handleInput}
               maxLength={200}
+              placeholder="e.g., Relieves fever, headache, and body pain"
+              hint="Helps customers find medicines by searching symptoms."
             />
           </div>
 
@@ -2812,16 +2792,17 @@ function MedicineForm({
 
           <Field
             name="tag"
-            label="Badge (optional)"
+            label="Highlight Badge (optional)"
             value={form.tag}
             onChange={handleInput}
             maxLength={30}
-            placeholder="Bestseller"
+            placeholder="e.g., Bestseller, 10% OFF"
+            hint="Appears as a small badge on the product image."
           />
 
           <Field
             name="price"
-            label="Selling price"
+            label="Your Selling Price (₹)"
             type="number"
             step="0.01"
             inputMode="decimal"
@@ -2832,39 +2813,43 @@ function MedicineForm({
 
           <Field
             name="mrp"
-            label="MRP"
+            label="Maximum Retail Price - MRP (₹)"
             type="number"
             step="0.01"
             inputMode="decimal"
             value={form.mrp}
             error={errors.mrp}
             onChange={handleInput}
+            hint="Discount is auto-calculated if MRP is higher than Selling Price."
           />
 
           <Field
             name="packType"
-            label="Pack type"
+            label="Packaging Type"
             value={form.packType}
             onChange={handleInput}
             maxLength={30}
+            placeholder="e.g., Strip, Bottle, Box, Tube"
           />
 
           <Field
             name="unitType"
-            label="Unit type"
+            label="Single Unit Type"
             value={form.unitType}
             onChange={handleInput}
             maxLength={30}
+            placeholder="e.g., Tablet, Capsule, ml, gm"
           />
 
           <Field
             name="packSize"
-            label="Units per pack"
+            label="Total units in one pack"
             type="number"
             inputMode="numeric"
             value={form.packSize}
             error={errors.packSize}
             onChange={handleInput}
+            hint="e.g., If a strip has 10 tablets, enter 10."
           />
 
           <Field
@@ -3162,41 +3147,46 @@ function BranchForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
           name="name"
-          label="Branch name"
+          label="Branch Official Name"
           value={form.name}
           error={errors.name}
           onChange={handleInput}
           maxLength={80}
-          placeholder="Lotus Pharmacy, Malad East"
+          placeholder="e.g., Lotus Pharmacy, Malad East"
+          hint="Customers will see this name on their bill."
         />
 
         <Field
           name="shortName"
-          label="Short name"
+          label="Short Name (For SMS/WA)"
           value={form.shortName}
           onChange={handleInput}
           maxLength={30}
-          placeholder="Malad East"
+          placeholder="e.g., Malad East"
+          hint="Keeps WhatsApp messages clean and short."
         />
 
         <Field
           name="phone"
-          label="WhatsApp number with country code"
+          label="WhatsApp Business Number"
           inputMode="numeric"
           value={form.phone}
           error={errors.phone}
           onChange={handleInput}
           maxLength={15}
-          placeholder="919876543210"
+          placeholder="e.g., 919876543210"
+          hint="Include country code (91). Customers will reply to this number."
         />
 
         <Field
           name="address"
-          label="Area label"
+          label="Short Area Label"
           value={form.address}
           error={errors.address}
           onChange={handleInput}
           maxLength={120}
+          placeholder="e.g., Near Station, Malad West"
+          hint="Quick reference for customers selecting a store."
         />
 
         <div className="sm:col-span-2">
@@ -3204,7 +3194,7 @@ function BranchForm({
             htmlFor="field-fullAddress"
             className="mb-1.5 block text-[13px] font-medium text-[#0B1220]/55"
           >
-            Full address
+            Complete Postal Address
           </label>
           <textarea
             id="field-fullAddress"
@@ -3213,6 +3203,7 @@ function BranchForm({
             value={form.fullAddress}
             onChange={handleInput}
             maxLength={300}
+            placeholder="e.g., Shop No 4, Ground Floor, XYZ Building, SV Road..."
             className={cx(
               'w-full rounded-2xl border bg-[#0B1220]/[0.03] px-4 py-3 text-[15px] outline-none focus:bg-white',
               errors.fullAddress
@@ -3220,11 +3211,7 @@ function BranchForm({
                 : 'border-transparent focus:border-[#0B7A6B]',
             )}
           />
-          {errors.fullAddress && (
-            <p className="mt-1.5 text-[12px] font-medium text-rose-600">
-              {errors.fullAddress}
-            </p>
-          )}
+          <p className="mt-1.5 text-[12px] text-[#0B1220]/45">Used for maps and detailed store info.</p>
         </div>
 
         <div className="rounded-[24px] bg-[#E6F4F1] p-5 sm:col-span-2">
@@ -4119,6 +4106,14 @@ function AdminPanel({
       </header>
 
       <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8">
+        
+        <AdminQuickStart 
+          branchesCount={branches.length} 
+          medicinesCount={stats?.medicineCount || 0} 
+          waConnected={waSession?.state === 'connected'} 
+          onNavigate={(newTab) => setTab(newTab)} 
+        />
+
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="Orders today"
@@ -4994,6 +4989,7 @@ export default function Page() {
   const [showAuth, setShowAuth] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const [view, setView] = useState<'store' | 'admin'>('store');
+  const [showWelcome, setShowWelcome] = useState(false);
 
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -5096,12 +5092,26 @@ export default function Page() {
         if (!cancelled) setSessionChecked(true);
       });
 
-    // ensureCsrf().catch(() => {});
-
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hasVisited = window.localStorage.getItem('lp_has_visited');
+      if (!hasVisited) {
+        setShowWelcome(true);
+      }
+    }
+  }, []);
+
+  const closeWelcome = () => {
+    setShowWelcome(false);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('lp_has_visited', 'true');
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -5822,22 +5832,6 @@ export default function Page() {
     selectedBranch,
     submitting,
   ]);
-
-  // const handleLogout = useCallback(async () => {
-  //   try {
-  //     await api('/api/auth/logout', {
-  //       method: 'POST',
-  //       body: JSON.stringify({}),
-  //     });
-  //   } catch {
-  //     // Local session state still resets.
-  //   }
-
-  //   setUser(null);
-  //   setView('store');
-  //   setShowAccount(false);
-  //   notify('Signed out.');
-  // }, [notify]);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -6669,6 +6663,8 @@ export default function Page() {
           {branchPicker}
         </div>
       </Sheet>
+
+      <WelcomeGuide open={showWelcome} onClose={closeWelcome} />
 
       <AuthSheet
         open={showAuth}
