@@ -480,8 +480,43 @@ function issueCsrf(req, res) {
   if (!token || token.length < 32) {
     token = crypto.randomBytes(32).toString('hex');
     res.cookie(CSRF_COOKIE_NAME, token, csrfCookieOptions());
+    // 🟢 DEBUG LOG: Pata chalega ki token generate/send ho raha hai ya nahi
+    console.log(`[CSRF DEBUG] Issued NEW token to origin: ${req.get('origin')}`);
+  } else {
+    // 🟢 DEBUG LOG: Pata chalega ki browser ne existing token bheja hai
+    console.log(`[CSRF DEBUG] Re-using EXISTING token for origin: ${req.get('origin')}`);
   }
   return token;
+}
+
+function csrfProtection(req, _res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+  const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
+  const headerToken = req.get('x-csrf-token');
+
+  if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
+
+    console.error(`\n=== ❌ CSRF FAILED DEBUG ===`);
+    console.error(`Failed Request : ${req.method} ${req.originalUrl}`);
+    console.error(`Frontend Origin: ${req.get('origin')}`);
+    console.error(`Cookie Token   : ${cookieToken ? 'RECEIVED (Length: ' + cookieToken.length + ')' : 'MISSING'}`);
+    console.error(`Header Token   : ${headerToken ? 'RECEIVED (Length: ' + headerToken.length + ')' : 'MISSING'}`);
+    
+    if (cookieToken && headerToken) {
+      console.error(`Tokens Match?  : NO (Values differ)`);
+    } else if (!cookieToken) {
+      console.error(`Reason         : Browser ne cookie send nahi ki. (Cross-origin/SameSite ka issue ho sakta hai)`);
+    } else if (!headerToken) {
+      console.error(`Reason         : Frontend ne 'x-csrf-token' header add nahi kiya.`);
+    }
+    
+    console.error(`All Cookies    :`, req.cookies);
+    console.error(`============================\n`);
+
+    return next(new ApiError(403, 'Security token missing or expired. Refresh and try again.'));
+  }
+  next();
 }
 
 function csrfProtection(req, _res, next) {
