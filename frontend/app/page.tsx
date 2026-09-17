@@ -490,34 +490,96 @@ const isAbortError = (error: unknown) =>
     ? error.name === 'AbortError'
     : (error as Error)?.name === 'AbortError';
 
-let csrfToken: string | null = null;
-let csrfPromise: Promise<string> | null = null;
+// let csrfToken: string | null = null;
+// let csrfPromise: Promise<string> | null = null;
 
-async function ensureCsrf(): Promise<string> {
-  if (csrfToken) return csrfToken;
-  if (csrfPromise) return csrfPromise;
+// async function ensureCsrf(): Promise<string> {
+//   if (csrfToken) return csrfToken;
+//   if (csrfPromise) return csrfPromise;
 
-  csrfPromise = fetch(`${API_URL}/api/auth/csrf`, {
-    credentials: 'include',
-  })
-    .then(async (response) => {
-      const data = await response.json();
-      if (!response.ok || !data?.csrfToken) {
-        throw new ApiError(response.status, data?.message || 'Security handshake failed.');
-      }
-      csrfToken = data.csrfToken;
-      return csrfToken as string;
-    })
-    .finally(() => {
-      csrfPromise = null;
-    });
+//   csrfPromise = fetch(`${API_URL}/api/auth/csrf`, {
+//     credentials: 'include',
+//   })
+//     .then(async (response) => {
+//       const data = await response.json();
+//       if (!response.ok || !data?.csrfToken) {
+//         throw new ApiError(response.status, data?.message || 'Security handshake failed.');
+//       }
+//       csrfToken = data.csrfToken;
+//       return csrfToken as string;
+//     })
+//     .finally(() => {
+//       csrfPromise = null;
+//     });
 
-  return csrfPromise;
-}
+//   return csrfPromise;
+// }
+
+// async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+//   const method = String(options.method || 'GET').toUpperCase();
+//   const writeRequest = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+//   const headers: Record<string, string> = {
+//     ...((options.headers as Record<string, string>) || {}),
+//   };
+
+//   if (!(options.body instanceof FormData)) {
+//     headers['Content-Type'] = 'application/json';
+//   }
+
+//   if (writeRequest) {
+//     headers['X-CSRF-Token'] = await ensureCsrf();
+//   }
+
+//   const timeoutController = new AbortController();
+//   const timer = window.setTimeout(
+//     () => timeoutController.abort(),
+//     REQUEST_TIMEOUT_MS,
+//   );
+//   const callerSignal = options.signal;
+//   const onCallerAbort = () => timeoutController.abort();
+//   callerSignal?.addEventListener('abort', onCallerAbort);
+
+//   let response: Response;
+
+//   try {
+//     response = await fetch(`${API_URL}${path}`, {
+//       ...options,
+//       credentials: 'include',
+//       headers,
+//       signal: timeoutController.signal,
+//     });
+//   } catch (error) {
+//     if (callerSignal?.aborted) throw error;
+//     if (isAbortError(error)) {
+//       throw new ApiError(0, 'The server took too long to respond.');
+//     }
+//     throw new ApiError(0, 'Cannot reach the server. Check your connection.');
+//   } finally {
+//     window.clearTimeout(timer);
+//     callerSignal?.removeEventListener('abort', onCallerAbort);
+//   }
+
+//   const isJson = response.headers
+//     .get('content-type')
+//     ?.includes('application/json');
+//   const payload = isJson ? await response.json().catch(() => null) : null;
+
+//   if (!response.ok) {
+//     if (response.status === 403 && /security token/i.test(payload?.message || '')) {
+//       csrfToken = null;
+//     }
+//     throw new ApiError(
+//       response.status,
+//       payload?.message || 'Request failed.',
+//       payload?.details,
+//       payload?.requestId,
+//     );
+//   }
+
+//   return payload as T;
+// }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const method = String(options.method || 'GET').toUpperCase();
-  const writeRequest = !['GET', 'HEAD', 'OPTIONS'].includes(method);
   const headers: Record<string, string> = {
     ...((options.headers as Record<string, string>) || {}),
   };
@@ -526,8 +588,12 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers['Content-Type'] = 'application/json';
   }
 
-  if (writeRequest) {
-    headers['X-CSRF-Token'] = await ensureCsrf();
+  // 🟢 LocalStorage se token nikal kar header me bhej rahe hain
+  if (typeof window !== 'undefined') {
+    const token = window.localStorage.getItem('lp_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
   }
 
   const timeoutController = new AbortController();
@@ -544,7 +610,6 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...options,
-      credentials: 'include',
       headers,
       signal: timeoutController.signal,
     });
@@ -565,8 +630,9 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const payload = isJson ? await response.json().catch(() => null) : null;
 
   if (!response.ok) {
-    if (response.status === 403 && /security token/i.test(payload?.message || '')) {
-      csrfToken = null;
+    // 🟢 Agar token expire ho gaya, toh clear kar do
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.localStorage.removeItem('lp_token');
     }
     throw new ApiError(
       response.status,
@@ -1946,6 +2012,45 @@ function AuthSheet({
     setFormError(null);
   };
 
+  // const submit = async (event: React.FormEvent) => {
+  //   event.preventDefault();
+  //   if (busy) return;
+
+  //   setBusy(true);
+  //   setFormError(null);
+
+  //   try {
+  //     const path =
+  //       mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+  //     const body =
+  //       mode === 'login'
+  //         ? {
+  //             email: form.email.trim(),
+  //             password: form.password,
+  //           }
+  //         : {
+  //             name: form.name.trim(),
+  //             email: form.email.trim(),
+  //             phone: form.phone,
+  //             password: form.password,
+  //           };
+
+  //     const data = await api<{ user: AuthUser }>(path, {
+  //       method: 'POST',
+  //       body: JSON.stringify(body),
+  //     });
+
+  //     onAuthenticated(data.user);
+  //   } catch (error) {
+  //     setFormError(errorText(error, 'That did not work. Try again.'));
+  //     if (error instanceof ApiError && error.details) {
+  //       setErrors(error.details);
+  //     }
+  //   } finally {
+  //     setBusy(false);
+  //   }
+  // };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (busy) return;
@@ -1969,10 +2074,16 @@ function AuthSheet({
               password: form.password,
             };
 
-      const data = await api<{ user: AuthUser }>(path, {
+      // 🟢 API se token receive kar rahe hain
+      const data = await api<{ user: AuthUser; token: string }>(path, {
         method: 'POST',
         body: JSON.stringify(body),
       });
+
+      // 🟢 Token ko browser me hamesha ke liye save kar rahe hain
+      if (typeof window !== 'undefined' && data.token) {
+        window.localStorage.setItem('lp_token', data.token);
+      }
 
       onAuthenticated(data.user);
     } catch (error) {
@@ -4985,7 +5096,7 @@ export default function Page() {
         if (!cancelled) setSessionChecked(true);
       });
 
-    ensureCsrf().catch(() => {});
+    // ensureCsrf().catch(() => {});
 
     return () => {
       cancelled = true;
@@ -5712,6 +5823,22 @@ export default function Page() {
     submitting,
   ]);
 
+  // const handleLogout = useCallback(async () => {
+  //   try {
+  //     await api('/api/auth/logout', {
+  //       method: 'POST',
+  //       body: JSON.stringify({}),
+  //     });
+  //   } catch {
+  //     // Local session state still resets.
+  //   }
+
+  //   setUser(null);
+  //   setView('store');
+  //   setShowAccount(false);
+  //   notify('Signed out.');
+  // }, [notify]);
+
   const handleLogout = useCallback(async () => {
     try {
       await api('/api/auth/logout', {
@@ -5720,6 +5847,11 @@ export default function Page() {
       });
     } catch {
       // Local session state still resets.
+    }
+
+    // 🟢 Logout par token delete kar do
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('lp_token');
     }
 
     setUser(null);

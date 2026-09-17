@@ -430,30 +430,144 @@ orderSchema.pre('validate', function assignOrderNumber() {
 
 const Order = model('Order', orderSchema);
 
+// /* ================================================================== */
+// /*  4. AUTH + CSRF                                                    */
+// /* ================================================================== */
+
+// const COOKIE_NAME = 'lp_session';
+// const CSRF_COOKIE_NAME = 'lp_csrf';
+
+// const baseCookieOptions = () => ({
+//   secure: isProd,
+//   sameSite: config.cookieSameSite,
+//   path: '/',
+// });
+
+// const sessionCookieOptions = () => ({
+//   ...baseCookieOptions(),
+//   httpOnly: true,
+//   maxAge: 7 * 24 * 60 * 60 * 1000,
+// });
+
+// const csrfCookieOptions = () => ({
+//   ...baseCookieOptions(),
+//   httpOnly: true,
+//   maxAge: 24 * 60 * 60 * 1000,
+// });
+
+// function signToken(user) {
+//   return jwt.sign(
+//     {
+//       sub: user._id.toString(),
+//       role: user.role,
+//       tv: user.tokenVersion || 0,
+//     },
+//     config.jwtSecret,
+//     { expiresIn: config.jwtExpiresIn },
+//   );
+// }
+
+// function sendAuthCookie(res, user) {
+//   res.cookie(COOKIE_NAME, signToken(user), sessionCookieOptions());
+// }
+
+// function clearAuthCookie(res) {
+//   res.clearCookie(COOKIE_NAME, sessionCookieOptions());
+// }
+
+// function issueCsrf(req, res) {
+//   let token = req.cookies?.[CSRF_COOKIE_NAME];
+//   if (!token || token.length < 32) {
+//     token = crypto.randomBytes(32).toString('hex');
+//     res.cookie(CSRF_COOKIE_NAME, token, csrfCookieOptions());
+//     // 🟢 DEBUG LOG: Pata chalega ki token generate/send ho raha hai ya nahi
+//     console.log(`[CSRF DEBUG] Issued NEW token to origin: ${req.get('origin')}`);
+//   } else {
+//     // 🟢 DEBUG LOG: Pata chalega ki browser ne existing token bheja hai
+//     console.log(`[CSRF DEBUG] Re-using EXISTING token for origin: ${req.get('origin')}`);
+//   }
+//   return token;
+// }
+
+// function csrfProtection(req, _res, next) {
+//   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+//   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
+//   const headerToken = req.get('x-csrf-token');
+
+//   if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
+
+//     console.error(`\n=== ❌ CSRF FAILED DEBUG ===`);
+//     console.error(`Failed Request : ${req.method} ${req.originalUrl}`);
+//     console.error(`Frontend Origin: ${req.get('origin')}`);
+//     console.error(`Cookie Token   : ${cookieToken ? 'RECEIVED (Length: ' + cookieToken.length + ')' : 'MISSING'}`);
+//     console.error(`Header Token   : ${headerToken ? 'RECEIVED (Length: ' + headerToken.length + ')' : 'MISSING'}`);
+    
+//     if (cookieToken && headerToken) {
+//       console.error(`Tokens Match?  : NO (Values differ)`);
+//     } else if (!cookieToken) {
+//       console.error(`Reason         : Browser ne cookie send nahi ki. (Cross-origin/SameSite ka issue ho sakta hai)`);
+//     } else if (!headerToken) {
+//       console.error(`Reason         : Frontend ne 'x-csrf-token' header add nahi kiya.`);
+//     }
+    
+//     console.error(`All Cookies    :`, req.cookies);
+//     console.error(`============================\n`);
+
+//     return next(new ApiError(403, 'Security token missing or expired. Refresh and try again.'));
+//   }
+//   next();
+// }
+
+// function csrfProtection(req, _res, next) {
+//   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+//   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
+//   const headerToken = req.get('x-csrf-token');
+
+//   if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
+//     return next(new ApiError(403, 'Security token missing or expired. Refresh and try again.'));
+//   }
+//   next();
+// }
+
+// async function authUserFromRequest(req) {
+//   const token = req.cookies?.[COOKIE_NAME];
+//   if (!token) return null;
+
+//   let payload;
+//   try {
+//     payload = jwt.verify(token, config.jwtSecret);
+//   } catch {
+//     return null;
+//   }
+
+//   const user = await User.findById(payload.sub).select('+tokenVersion');
+//   if (!user || !user.isActive) return null;
+//   if ((user.tokenVersion || 0) !== (payload.tv || 0)) return null;
+//   return user;
+// }
+
+// const optionalAuth = asyncHandler(async (req, _res, next) => {
+//   req.user = await authUserFromRequest(req);
+//   next();
+// });
+
+// const protect = asyncHandler(async (req, _res, next) => {
+//   const user = await authUserFromRequest(req);
+//   if (!user) throw new ApiError(401, 'Your session expired. Sign in again.');
+//   req.user = user;
+//   next();
+// });
+
+// const adminOnly = (req, _res, next) => {
+//   if (req.user?.role !== 'admin') return next(new ApiError(403, 'Admin access only.'));
+//   next();
+// };
+
 /* ================================================================== */
-/*  4. AUTH + CSRF                                                    */
+/*  4. AUTH (Bearer Token Based)                                      */
 /* ================================================================== */
-
-const COOKIE_NAME = 'lp_session';
-const CSRF_COOKIE_NAME = 'lp_csrf';
-
-const baseCookieOptions = () => ({
-  secure: isProd,
-  sameSite: config.cookieSameSite,
-  path: '/',
-});
-
-const sessionCookieOptions = () => ({
-  ...baseCookieOptions(),
-  httpOnly: true,
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-});
-
-const csrfCookieOptions = () => ({
-  ...baseCookieOptions(),
-  httpOnly: true,
-  maxAge: 24 * 60 * 60 * 1000,
-});
 
 function signToken(user) {
   return jwt.sign(
@@ -467,72 +581,12 @@ function signToken(user) {
   );
 }
 
-function sendAuthCookie(res, user) {
-  res.cookie(COOKIE_NAME, signToken(user), sessionCookieOptions());
-}
-
-function clearAuthCookie(res) {
-  res.clearCookie(COOKIE_NAME, sessionCookieOptions());
-}
-
-function issueCsrf(req, res) {
-  let token = req.cookies?.[CSRF_COOKIE_NAME];
-  if (!token || token.length < 32) {
-    token = crypto.randomBytes(32).toString('hex');
-    res.cookie(CSRF_COOKIE_NAME, token, csrfCookieOptions());
-    // 🟢 DEBUG LOG: Pata chalega ki token generate/send ho raha hai ya nahi
-    console.log(`[CSRF DEBUG] Issued NEW token to origin: ${req.get('origin')}`);
-  } else {
-    // 🟢 DEBUG LOG: Pata chalega ki browser ne existing token bheja hai
-    console.log(`[CSRF DEBUG] Re-using EXISTING token for origin: ${req.get('origin')}`);
-  }
-  return token;
-}
-
-function csrfProtection(req, _res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-
-  const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
-  const headerToken = req.get('x-csrf-token');
-
-  if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
-
-    console.error(`\n=== ❌ CSRF FAILED DEBUG ===`);
-    console.error(`Failed Request : ${req.method} ${req.originalUrl}`);
-    console.error(`Frontend Origin: ${req.get('origin')}`);
-    console.error(`Cookie Token   : ${cookieToken ? 'RECEIVED (Length: ' + cookieToken.length + ')' : 'MISSING'}`);
-    console.error(`Header Token   : ${headerToken ? 'RECEIVED (Length: ' + headerToken.length + ')' : 'MISSING'}`);
-    
-    if (cookieToken && headerToken) {
-      console.error(`Tokens Match?  : NO (Values differ)`);
-    } else if (!cookieToken) {
-      console.error(`Reason         : Browser ne cookie send nahi ki. (Cross-origin/SameSite ka issue ho sakta hai)`);
-    } else if (!headerToken) {
-      console.error(`Reason         : Frontend ne 'x-csrf-token' header add nahi kiya.`);
-    }
-    
-    console.error(`All Cookies    :`, req.cookies);
-    console.error(`============================\n`);
-
-    return next(new ApiError(403, 'Security token missing or expired. Refresh and try again.'));
-  }
-  next();
-}
-
-function csrfProtection(req, _res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-
-  const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
-  const headerToken = req.get('x-csrf-token');
-
-  if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
-    return next(new ApiError(403, 'Security token missing or expired. Refresh and try again.'));
-  }
-  next();
-}
-
 async function authUserFromRequest(req) {
-  const token = req.cookies?.[COOKIE_NAME];
+  // 🟢 Ab hum cookie ki jagah Authorization header padhenge
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+
+  const token = authHeader.split(' ')[1];
   if (!token) return null;
 
   let payload;
@@ -1328,9 +1382,49 @@ async function releaseInventoryForOrder(order) {
 
 /* ---------- Auth ---------- */
 
-const getCsrf = (req, res) => {
-  res.json({ csrfToken: issueCsrf(req, res) });
-};
+// const getCsrf = (req, res) => {
+//   res.json({ csrfToken: issueCsrf(req, res) });
+// };
+
+// const register = asyncHandler(async (req, res) => {
+//   const parsed = registerSchema.parse(req.body);
+//   const email = parsed.email.toLowerCase();
+
+//   const existing = await User.findOne({ email });
+//   if (existing) throw new ApiError(409, 'An account with this email already exists.');
+
+//   const user = await User.create({ ...parsed, email, role: 'customer' });
+//   const authUser = await User.findById(user._id).select('+tokenVersion');
+//   sendAuthCookie(res, authUser);
+//   res.status(201).json({ user: authUser.toPublic() });
+// });
+
+// const login = asyncHandler(async (req, res) => {
+//   const parsed = loginSchema.parse(req.body);
+//   const user = await User.findOne({ email: parsed.email.toLowerCase() })
+//     .select('+password +tokenVersion');
+
+//   if (!user || !user.isActive || !(await user.comparePassword(parsed.password))) {
+//     throw new ApiError(401, 'Email or password is incorrect.');
+//   }
+
+//   user.lastLoginAt = new Date();
+//   await user.save({ validateBeforeSave: false });
+
+//   sendAuthCookie(res, user);
+//   res.json({ user: user.toPublic() });
+// });
+
+// const logout = asyncHandler(async (req, res) => {
+//   const user = await authUserFromRequest(req);
+//   if (user) {
+//     user.tokenVersion = (user.tokenVersion || 0) + 1;
+//     await user.save({ validateBeforeSave: false });
+//   }
+//   clearAuthCookie(res);
+//   res.json({ message: 'Signed out.' });
+// });
+
 
 const register = asyncHandler(async (req, res) => {
   const parsed = registerSchema.parse(req.body);
@@ -1341,8 +1435,9 @@ const register = asyncHandler(async (req, res) => {
 
   const user = await User.create({ ...parsed, email, role: 'customer' });
   const authUser = await User.findById(user._id).select('+tokenVersion');
-  sendAuthCookie(res, authUser);
-  res.status(201).json({ user: authUser.toPublic() });
+  
+  // 🟢 Token ko JSON me bhej rahe hain
+  res.status(201).json({ user: authUser.toPublic(), token: signToken(authUser) });
 });
 
 const login = asyncHandler(async (req, res) => {
@@ -1357,8 +1452,8 @@ const login = asyncHandler(async (req, res) => {
   user.lastLoginAt = new Date();
   await user.save({ validateBeforeSave: false });
 
-  sendAuthCookie(res, user);
-  res.json({ user: user.toPublic() });
+  // 🟢 Token ko JSON me bhej rahe hain
+  res.json({ user: user.toPublic(), token: signToken(user) });
 });
 
 const logout = asyncHandler(async (req, res) => {
@@ -1367,7 +1462,6 @@ const logout = asyncHandler(async (req, res) => {
     user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save({ validateBeforeSave: false });
   }
-  clearAuthCookie(res);
   res.json({ message: 'Signed out.' });
 });
 
@@ -2221,7 +2315,7 @@ const waSessionLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, ...limiterOpt
 const waActionLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 20, ...limiterOptions });
 
 const authRouter = express.Router();
-authRouter.get('/csrf', getCsrf);
+// authRouter.get('/csrf', getCsrf);
 authRouter.post('/register', authLimiter, register);
 authRouter.post('/login', authLimiter, login);
 authRouter.post('/logout', logout);
@@ -2342,12 +2436,13 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'Idempotency-Key', 'X-Request-Id'],
+    // 'Authorization' header allow karna zaruri hai, warna Token block ho jayega
+    allowedHeaders: ['Content-Type', 'Idempotency-Key', 'X-Request-Id', 'Authorization'], 
   }),
 );
 
 app.use(globalLimiter);
-app.use(csrfProtection);
+// app.use(csrfProtection);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', uptime: Math.round(process.uptime()) });
