@@ -1452,13 +1452,15 @@ const login = asyncHandler(async (req, res) => {
 
   if (!user) {
     console.log('3. ❌ Result: User DB me nahi mila is email se.');
-    throw new ApiError(401, 'Email or password is incorrect.');
+    // 🟢 UI me exact error show karne ke liye:
+    throw new ApiError(401, 'DEBUG ISSUE: Ye Email database mein exist hi nahi karti.');
   }
   console.log('3. ✅ Result: User DB me mil gaya.');
 
   if (!user.isActive) {
     console.log('4. ❌ Result: User account inactive hai.');
-    throw new ApiError(401, 'Email or password is incorrect.');
+    // 🟢 UI me exact error show karne ke liye:
+    throw new ApiError(401, 'DEBUG ISSUE: Ye account database mein "Inactive" mark kiya hua hai.');
   }
   console.log('4. ✅ Result: User account active hai.');
 
@@ -1467,7 +1469,8 @@ const login = asyncHandler(async (req, res) => {
 
   if (!isPasswordMatch) {
     console.log('6. ❌ Result: Password database ke hash se match NAHI hua.');
-    throw new ApiError(401, 'Email or password is incorrect.');
+    // 🟢 UI me exact error show karne ke liye:
+    throw new ApiError(401, 'DEBUG ISSUE: Password galat hai (DB ke password hash se match nahi ho raha).');
   }
 
   console.log('6. 🎉 ✅ Result: Login Successful! Token generate ho raha hai.');
