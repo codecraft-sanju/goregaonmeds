@@ -3,6 +3,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
 import "./pharmacy.css"; // IMPORTANT: Replace with your actual path
+
+// --- React Bits Components ---
+// Make sure these files exist in your folder as you provided them
+import SlideCommit from "./SlideCommit";
+import SplitText from "./SplitText";
+import StrokeText from "./StrokeText";
+import TextType from "./TextType";
+
 import {
   ArrowUpRight,
   Check,
@@ -26,6 +34,7 @@ import {
   Pill,
 } from "lucide-react";
 import Image from "next/image";
+
 const PHONE = "919987732967";
 const API = (
   process.env.NEXT_PUBLIC_API_URL ||
@@ -83,9 +92,9 @@ type Customer = {
   landmark: string;
 };
 
-// Framer Motion Variants for Scroll Animations
+// Framer Motion Variants for Bi-directional Scroll Animations
 const fadeInUp = {
-  hidden: { opacity: 0, y: 30 },
+  hidden: { opacity: 0, y: 40 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } },
 };
 
@@ -93,7 +102,7 @@ const staggerContainer = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
-    transition: { staggerChildren: 0.12 },
+    transition: { staggerChildren: 0.15 },
   },
 };
 
@@ -280,9 +289,9 @@ export default function PharmacyLanding() {
     });
   }
 
-  async function placeOrder(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (submitting.current) return;
+  // Modified to work smoothly with <SlideCommit />
+  async function placeOrder() {
+    if (submitting.current) return Promise.reject(new Error("Already submitting"));
     invalidate();
     if (
       !customer.name.trim() ||
@@ -290,23 +299,25 @@ export default function PharmacyLanding() {
       !customer.area.trim()
     ) {
       setError("Please fill in your name and complete delivery address.");
-      return;
+      return Promise.reject(new Error("Validation failed"));
     }
     if (!/^[6-9]\d{9}$/.test(customer.phone)) {
       setError("Enter a valid 10-digit Indian mobile number.");
-      return;
+      return Promise.reject(new Error("Validation failed"));
     }
     if (mode === "type" && !medicines.trim()) {
       setError("Please enter the medicines you need.");
-      return;
+      return Promise.reject(new Error("Validation failed"));
     }
     if (mode === "prescription" && (!file || !consent)) {
       setError("Choose a prescription image and agree to share it.");
-      return;
+      return Promise.reject(new Error("Validation failed"));
     }
+
     submitting.current = true;
     setBusy(true);
     setProgress(0);
+
     try {
       const imageUrl =
         mode === "prescription" ? await uploadPrescription(file!) : "";
@@ -320,14 +331,19 @@ export default function PharmacyLanding() {
         .join(", ");
       const message = `*New medicine request | Goregaonmeds*\n\n*Customer*\nName: ${customer.name.trim()}\nPhone: ${customer.phone}\nAddress: ${address}\n\n*Preferred branch*\n${BRANCHES[branch].name}\n\n*Medicines / prescription*\n${imageUrl || medicines.trim()}\n\n*Payment preference*\n${payment === "upi" ? "UPI at delivery" : "Cash on delivery"}\n\nPlease confirm availability, total price and delivery details.`;
       const url = `https://wa.me/${PHONE}?text=${encodeURIComponent(message)}`;
+      
       setReadyUrl(url);
       window.location.assign(url);
+      
+      // Resolve for SlideCommit success animation
+      return Promise.resolve(url); 
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
           : "Something went wrong. Please try again.",
       );
+      return Promise.reject(err);
     } finally {
       request.current = null;
       submitting.current = false;
@@ -399,16 +415,31 @@ export default function PharmacyLanding() {
       </header>
 
       <main>
-        <section className="gm-container gm-hero">
+        <section className="gm-container gm-hero relative">
+          
+          {/* Stunning Background Watermark using StrokeText */}
+          <div className="gm-hero-stroke">
+            <StrokeText
+              text="GOREGAON"
+              strokeColor="#153f3414"
+              fillColor="transparent"
+              strokeWidth={1.5}
+              drawDuration={2}
+              trigger="mount"
+              fontSize={180}
+            />
+          </div>
+
           <motion.div 
             initial={{ opacity: 0, x: -40 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8, ease: "easeOut" }}
-            className="gm-hero-copy"
+            className="gm-hero-copy relative z-10"
           >
             <span className="gm-eyebrow">
               <span className="gm-dot" /> YOUR LOCAL PHARMACY, REIMAGINED
             </span>
+            
             <h1>
               Care, closer
               <br />
@@ -423,10 +454,22 @@ export default function PharmacyLanding() {
                 ✳
               </motion.span>
             </h1>
-            <p>
-              Your everyday medicines. Your neighbourhood people. Request what
-              you need, and let’s take care of the rest.
-            </p>
+            
+            <div className="gm-hero-desc">
+              <TextType 
+                text={[
+                  "Your everyday medicines.",
+                  "Your neighbourhood people.",
+                  "Request what you need, let's take care of the rest."
+                ]}
+                typingSpeed={35}
+                pauseDuration={1800}
+                showCursor={true}
+                cursorCharacter="|"
+                className="gm-text-type"
+              />
+            </div>
+
             <div className="gm-actions">
               <a href="#order" className="gm-btn gm-dark">
                 Get your medicines <ArrowUpRight size={20} />
@@ -495,10 +538,11 @@ export default function PharmacyLanding() {
           </motion.div>
         </section>
 
+        {/* Bi-directional scroll setting: once: false */}
         <motion.div 
           initial="hidden"
           whileInView="visible"
-          viewport={{ once: true, margin: "-50px" }}
+          viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
           variants={staggerContainer}
           className="gm-benefit-strip"
         >
@@ -524,16 +568,20 @@ export default function PharmacyLanding() {
           <motion.div 
             initial="hidden" 
             whileInView="visible" 
-            viewport={{ once: true, margin: "-100px" }}
+            viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
             variants={fadeInUp} 
             className="gm-section-heading"
           >
             <div>
               <span className="gm-eyebrow">LESS EFFORT. MORE CARE.</span>
-              <h2>
-                One less thing
-                <br />
-                on your <span className="gm-serif">to-do list.</span>
+              <h2 className="gm-split-wrap">
+                <SplitText
+                  text="One less thing on your to-do list."
+                  delay={30}
+                  duration={0.8}
+                  splitType="words"
+                  threshold={0.1}
+                />
               </h2>
             </div>
             <p>
@@ -546,7 +594,7 @@ export default function PharmacyLanding() {
           <motion.div 
             initial="hidden" 
             whileInView="visible" 
-            viewport={{ once: true, margin: "-100px" }}
+            viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
             variants={staggerContainer}
             className="gm-steps"
           >
@@ -584,14 +632,18 @@ export default function PharmacyLanding() {
             <motion.aside 
               initial={{ opacity: 0, x: -30 }}
               whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true, margin: "-100px" }}
+              viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
               transition={{ duration: 0.6 }}
               className="gm-order-intro"
             >
               <span className="gm-eyebrow">LET’S GET YOU SORTED</span>
-              <h2>
-                Your next refill,
-                <br />a few taps <span className="gm-serif">away.</span>
+              <h2 className="gm-split-wrap">
+                <SplitText
+                  text="Your next refill, a few taps away."
+                  delay={30}
+                  duration={0.8}
+                  splitType="words"
+                />
               </h2>
               <p>
                 Choose a branch, tell us what you need, and we’ll take it from
@@ -618,10 +670,10 @@ export default function PharmacyLanding() {
             <motion.form
               initial={{ opacity: 0, y: 40 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-100px" }}
+              viewport={{ once: false, amount: 0.1, margin: "0px 0px -50px 0px" }}
               transition={{ duration: 0.6 }}
               className="gm-order-form"
-              onSubmit={placeOrder}
+              onSubmit={(e) => e.preventDefault()} // Let SlideCommit handle submission
               aria-busy={busy}
             >
               <div className="gm-form-heading">
@@ -1012,21 +1064,20 @@ export default function PharmacyLanding() {
                   </div>
                 </motion.div>
               ) : (
-                <motion.button
-                  whileHover={{ scale: 1.015 }}
-                  whileTap={{ scale: 0.985 }}
-                  type="submit"
-                  className="gm-btn gm-dark gm-submit"
-                  disabled={busy}
-                >
-                  {busy ? (
-                    <Loader2 className="gm-spin" size={20} />
-                  ) : (
-                    <MessageCircle size={21} />
-                  )}
-                  {busy ? "Preparing your request…" : "Continue to WhatsApp"}
-                  {!busy && <ArrowUpRight size={21} />}
-                </motion.button>
+                <div className="gm-slide-commit-wrapper">
+                  <SlideCommit
+                    label="Slide to WhatsApp"
+                    doneLabel="Message Ready"
+                    errorLabel="Check Details"
+                    onConfirm={placeOrder}
+                    trackColor="#153f34"
+                    handleColor="#d8ef8d"
+                    successColor="#418768"
+                    dangerColor="#9a3826"
+                    width={310}
+                    disabled={busy}
+                  />
+                </div>
               )}
               <p className="gm-form-footnote">
                 No payment now. Send the message on WhatsApp to request your
@@ -1040,16 +1091,19 @@ export default function PharmacyLanding() {
           <motion.div 
             initial="hidden" 
             whileInView="visible" 
-            viewport={{ once: true, margin: "-100px" }}
+            viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
             variants={fadeInUp} 
             className="gm-section-heading"
           >
             <div>
               <span className="gm-eyebrow">AROUND THE CORNER</span>
-              <h2>
-                Three branches.
-                <br />
-                One <span className="gm-serif">neighbourhood.</span>
+              <h2 className="gm-split-wrap">
+                <SplitText
+                  text="Three branches. One neighbourhood."
+                  delay={30}
+                  duration={0.8}
+                  splitType="words"
+                />
               </h2>
             </div>
             <p>
@@ -1062,7 +1116,7 @@ export default function PharmacyLanding() {
           <motion.div 
             initial="hidden" 
             whileInView="visible" 
-            viewport={{ once: true, margin: "-100px" }}
+            viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
             variants={staggerContainer}
             className="gm-branches"
           >
@@ -1125,7 +1179,7 @@ export default function PharmacyLanding() {
           <motion.div 
             initial={{ opacity: 0, scale: 0.95, rotate: -2 }}
             whileInView={{ opacity: 1, scale: 1, rotate: 0 }}
-            viewport={{ once: true, margin: "-100px" }}
+            viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
             transition={{ duration: 0.6 }}
             className="gm-about-art"
           >
@@ -1147,14 +1201,18 @@ export default function PharmacyLanding() {
           <motion.div 
             initial="hidden" 
             whileInView="visible" 
-            viewport={{ once: true, margin: "-100px" }}
+            viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
             variants={fadeInUp} 
             className="gm-about-copy"
           >
             <span className="gm-eyebrow">A NOTE FROM YOUR NEIGHBOURHOOD</span>
-            <h2>
-              A familiar name.
-              <br />A little more <span className="gm-serif">care.</span>
+            <h2 className="gm-split-wrap">
+              <SplitText
+                text="A familiar name. A little more care."
+                delay={30}
+                duration={0.8}
+                splitType="words"
+              />
             </h2>
             <p>
               Goregaonmeds brings Apple Pharmacy, Latus Pharmacy and Healthzone
@@ -1175,14 +1233,17 @@ export default function PharmacyLanding() {
           <motion.div
             initial="hidden" 
             whileInView="visible" 
-            viewport={{ once: true, margin: "-100px" }}
+            viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
             variants={fadeInUp}
           >
             <span className="gm-eyebrow">GOOD TO KNOW</span>
-            <h2>
-              A few helpful
-              <br />
-              <span className="gm-serif">answers.</span>
+            <h2 className="gm-split-wrap">
+              <SplitText
+                text="A few helpful answers."
+                delay={30}
+                duration={0.8}
+                splitType="words"
+              />
             </h2>
             <p>Something else on your mind?</p>
             <a
@@ -1197,7 +1258,7 @@ export default function PharmacyLanding() {
           <motion.div
              initial="hidden" 
              whileInView="visible" 
-             viewport={{ once: true, margin: "-100px" }}
+             viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
              variants={staggerContainer}
           >
             {FAQ.map(([question, answer]) => (
@@ -1215,7 +1276,7 @@ export default function PharmacyLanding() {
         <motion.section 
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-100px" }}
+          viewport={{ once: false, amount: 0.2, margin: "0px 0px -50px 0px" }}
           transition={{ duration: 0.6 }}
           className="gm-container gm-contact-banner"
         >

@@ -8,6 +8,7 @@ const geist = Geist({
   subsets: ["latin"],
   display: "swap",
 });
+
 export const metadata: Metadata = {
   title: "Goregaonmeds | Your neighbourhood pharmacy, delivered",
   description:
@@ -26,21 +27,18 @@ export const metadata: Metadata = {
     description: "Your neighbourhood pharmacy, delivered in Goregaon East.",
   },
 };
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: "#123e33",
 };
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={geist.variable}>
-      <body
-        style={{
-          margin: 0,
-          background: "#f7f8f2",
-          fontFamily: "var(--font-geist-sans), Arial, sans-serif",
-        }}
-      >
+      {/* Inline styles hata diye gaye hain taaki hydration error na aaye */}
+      <body>
         {children}
       </body>
     </html>
