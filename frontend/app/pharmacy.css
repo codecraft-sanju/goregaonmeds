@@ -121,15 +121,29 @@
   font-weight: 600;
 }
 
-.gm-mark {
-  height: 40px;
-  width: 40px;
-  border-radius: 13px;
-  background: var(--ink);
-  color: var(--lime);
-  display: grid;
-  place-items: center;
-  transform: rotate(-7deg);
+.gm-mark-logo {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: transparent;
+  border: 0;
+  overflow: hidden;
+}
+
+.gm-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+
+  /* Generated image me thoda whitespace hai,
+     navbar me logo ko visible banane ke liye */
+  transform: scale(1.25);
 }
 
 .gm-desktop-nav {

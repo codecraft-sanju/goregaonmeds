@@ -25,7 +25,7 @@ import {
   Navigation,
   Pill,
 } from "lucide-react";
-
+import Image from "next/image";
 const PHONE = "919987732967";
 const API = (
   process.env.NEXT_PUBLIC_API_URL ||
@@ -100,9 +100,17 @@ const staggerContainer = {
 function Brand() {
   return (
     <a className="gm-brand" href="#home" aria-label="Goregaonmeds home">
-      <span className="gm-mark">
-        <Plus strokeWidth={3} />
+      <span className="gm-mark gm-mark-logo">
+        <Image
+          src="/logo.png"
+          alt=""
+          width={44}
+          height={44}
+          priority
+          className="gm-logo-img"
+        />
       </span>
+
       <span>
         goregaon<span className="gm-brand-light">meds</span>
         <small>YOUR NEIGHBOURHOOD PHARMACY</small>
