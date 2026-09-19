@@ -50,11 +50,11 @@ const BRANCHES = [
     tone: "apple",
   },
   {
-    name: "Latus Pharmacy",
+    name: "Lotus Pharmacy",
     area: "Jay Prakash Nagar",
     address:
       "Shop No. 10, Shreyas Bhavan, Jay Prakash Nagar Road No. 1, opposite Domino’s Pizza, Goregaon East, Mumbai",
-    tone: "latus",
+    tone: "lotus",
   },
   {
     name: "Healthzone & Cosmetic",
@@ -1215,7 +1215,7 @@ export default function PharmacyLanding() {
               />
             </h2>
             <p>
-              Goregaonmeds brings Apple Pharmacy, Latus Pharmacy and Healthzone
+              Goregaonmeds brings Apple Pharmacy, Lotus Pharmacy and Healthzone
               & Cosmetic together in one simple place.
             </p>
             <p>
