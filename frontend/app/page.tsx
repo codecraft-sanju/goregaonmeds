@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { motion } from "framer-motion";
+import "./pharmacy.css"; // IMPORTANT: Replace with your actual path
 import {
   ArrowUpRight,
   Check,
@@ -29,6 +31,7 @@ const API = (
   process.env.NEXT_PUBLIC_API_URL ||
   (process.env.NODE_ENV === "development" ? "http://localhost:5000" : "")
 ).replace(/\/+$/, "");
+
 const BRANCHES = [
   {
     name: "Apple Pharmacy",
@@ -52,6 +55,7 @@ const BRANCHES = [
     tone: "health",
   },
 ];
+
 const FAQ = [
   [
     "How does ordering work?",
@@ -70,6 +74,7 @@ const FAQ = [
     "Yes. Use the WhatsApp contact button and attach your prescription in the chat. If you upload here, your image is stored on Cloudinary and a shareable link is included in your message. Anyone with that link can view it.",
   ],
 ];
+
 type Customer = {
   name: string;
   phone: string;
@@ -77,6 +82,21 @@ type Customer = {
   area: string;
   landmark: string;
 };
+
+// Framer Motion Variants for Scroll Animations
+const fadeInUp = {
+  hidden: { opacity: 0, y: 30 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } },
+};
+
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.12 },
+  },
+};
+
 function Brand() {
   return (
     <a className="gm-brand" href="#home" aria-label="Goregaonmeds home">
@@ -129,10 +149,13 @@ export default function PharmacyLanding() {
     setPreviewFailed(false);
     return () => URL.revokeObjectURL(url);
   }, [file]);
+
   useEffect(() => () => request.current?.abort(), []);
+
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
+
   useEffect(() => {
     const close = (e: KeyboardEvent) => {
       if (e.key === "Escape") setMenu(false);
@@ -140,10 +163,12 @@ export default function PharmacyLanding() {
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, []);
+
   function invalidate() {
     setReadyUrl("");
     setError("");
   }
+
   function selectFile(next?: File) {
     if (!next || submitting.current) return;
     invalidate();
@@ -171,6 +196,7 @@ export default function PharmacyLanding() {
     cachedUpload.current = null;
     setConsent(false);
   }
+
   function uploadPrescription(selected: File): Promise<string> {
     if (cachedUpload.current?.file === selected)
       return Promise.resolve(cachedUpload.current.url);
@@ -227,7 +253,6 @@ export default function PharmacyLanding() {
         resolve(data.url!);
       };
       const body = new FormData();
-      // Some phones provide HEIC with an empty MIME type.
       const ext = selected.name.split(".").pop()?.toLowerCase();
       const mime =
         selected.type ||
@@ -246,6 +271,7 @@ export default function PharmacyLanding() {
       xhr.send(body);
     });
   }
+
   async function placeOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting.current) return;
@@ -303,18 +329,23 @@ export default function PharmacyLanding() {
 
   return (
     <div className="gm" id="home">
-      <style>{styles}</style>
       <a href="#order" className="gm-skip">
         Skip to order form
       </a>
-      <div className="gm-announcement">
+      
+      <motion.div 
+        initial={{ opacity: 0, y: -20 }} 
+        animate={{ opacity: 1, y: 0 }} 
+        className="gm-announcement"
+      >
         <span>
           <MapPin size={13} /> Made for Goregaon East
         </span>
         <span>
           Local care. A little closer. <Heart size={13} />
         </span>
-      </div>
+      </motion.div>
+
       <header className="gm-header">
         <div className="gm-container gm-nav">
           <Brand />
@@ -323,10 +354,7 @@ export default function PharmacyLanding() {
             <a href="#branches">Our branches</a>
             <a href="#about">About us</a>
           </nav>
-          <a
-            className="gm-btn gm-btn-small gm-dark gm-header-cta"
-            href="#order"
-          >
+          <a className="gm-btn gm-btn-small gm-dark gm-header-cta" href="#order">
             Order medicines <ArrowUpRight size={17} />
           </a>
           <button
@@ -340,7 +368,9 @@ export default function PharmacyLanding() {
           </button>
         </div>
         {menu && (
-          <nav
+          <motion.nav
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
             id="mobile-navigation"
             className="gm-mobile-nav"
             aria-label="Mobile navigation"
@@ -356,13 +386,18 @@ export default function PharmacyLanding() {
                 <ArrowUpRight size={18} />
               </a>
             ))}
-          </nav>
+          </motion.nav>
         )}
       </header>
 
       <main>
         <section className="gm-container gm-hero">
-          <div className="gm-hero-copy">
+          <motion.div 
+            initial={{ opacity: 0, x: -40 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
+            className="gm-hero-copy"
+          >
             <span className="gm-eyebrow">
               <span className="gm-dot" /> YOUR LOCAL PHARMACY, REIMAGINED
             </span>
@@ -370,9 +405,15 @@ export default function PharmacyLanding() {
               Care, closer
               <br />
               to <span className="gm-serif">home.</span>
-              <span className="gm-heading-star" aria-hidden="true">
+              <motion.span 
+                initial={{ rotate: -90, opacity: 0 }}
+                animate={{ rotate: 0, opacity: 1 }}
+                transition={{ delay: 0.5, duration: 1 }}
+                className="gm-heading-star" 
+                aria-hidden="true"
+              >
                 ✳
-              </span>
+              </motion.span>
             </h1>
             <p>
               Your everyday medicines. Your neighbourhood people. Request what
@@ -392,8 +433,12 @@ export default function PharmacyLanding() {
               </span>{" "}
               Pay at delivery <i /> Order on WhatsApp
             </div>
-          </div>
-          <div
+          </motion.div>
+          
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
             className="gm-hero-art"
             aria-label="Illustration of a neighbourhood pharmacy delivery bag"
           >
@@ -439,9 +484,16 @@ export default function PharmacyLanding() {
             <span className="gm-art-star" aria-hidden="true">
               ✳
             </span>
-          </div>
+          </motion.div>
         </section>
-        <div className="gm-benefit-strip">
+
+        <motion.div 
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-50px" }}
+          variants={staggerContainer}
+          className="gm-benefit-strip"
+        >
           <div className="gm-container">
             {[
               [ShoppingBag, "Medicine requests, simplified"],
@@ -451,17 +503,23 @@ export default function PharmacyLanding() {
             ].map(([Icon, text]) => {
               const I = Icon as typeof ShoppingBag;
               return (
-                <span key={String(text)}>
+                <motion.span variants={fadeInUp} key={String(text)}>
                   <I size={19} />
                   {String(text)}
-                </span>
+                </motion.span>
               );
             })}
           </div>
-        </div>
+        </motion.div>
 
         <section id="how" className="gm-container gm-section">
-          <div className="gm-section-heading">
+          <motion.div 
+            initial="hidden" 
+            whileInView="visible" 
+            viewport={{ once: true, margin: "-100px" }}
+            variants={fadeInUp} 
+            className="gm-section-heading"
+          >
             <div>
               <span className="gm-eyebrow">LESS EFFORT. MORE CARE.</span>
               <h2>
@@ -475,8 +533,15 @@ export default function PharmacyLanding() {
               <br />
               Just your local pharmacy, a message away.
             </p>
-          </div>
-          <div className="gm-steps">
+          </motion.div>
+
+          <motion.div 
+            initial="hidden" 
+            whileInView="visible" 
+            viewport={{ once: true, margin: "-100px" }}
+            variants={staggerContainer}
+            className="gm-steps"
+          >
             {[
               {
                 icon: FileText,
@@ -494,21 +559,27 @@ export default function PharmacyLanding() {
                 text: "Once confirmed, receive your medicines and pay at delivery.",
               },
             ].map((item, index) => (
-              <article key={item.title} className="gm-step">
+              <motion.article variants={fadeInUp} key={item.title} className="gm-step">
                 <div className="gm-step-top">
                   <item.icon size={27} />
                   <span>0{index + 1}</span>
                 </div>
                 <h3>{item.title}</h3>
                 <p>{item.text}</p>
-              </article>
+              </motion.article>
             ))}
-          </div>
+          </motion.div>
         </section>
 
         <section id="order" className="gm-order-section">
           <div className="gm-container gm-order-grid">
-            <aside className="gm-order-intro">
+            <motion.aside 
+              initial={{ opacity: 0, x: -30 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true, margin: "-100px" }}
+              transition={{ duration: 0.6 }}
+              className="gm-order-intro"
+            >
               <span className="gm-eyebrow">LET’S GET YOU SORTED</span>
               <h2>
                 Your next refill,
@@ -534,8 +605,13 @@ export default function PharmacyLanding() {
               >
                 Prefer to chat directly? <ArrowUpRight size={18} />
               </a>
-            </aside>
-            <form
+            </motion.aside>
+
+            <motion.form
+              initial={{ opacity: 0, y: 40 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-100px" }}
+              transition={{ duration: 0.6 }}
               className="gm-order-form"
               onSubmit={placeOrder}
               aria-busy={busy}
@@ -579,7 +655,11 @@ export default function PharmacyLanding() {
                     ))}
                   </div>
                   {mode === "type" ? (
-                    <label className="gm-label">
+                    <motion.label 
+                      initial={{ opacity: 0, height: 0 }} 
+                      animate={{ opacity: 1, height: "auto" }} 
+                      className="gm-label"
+                    >
                       Medicine names & quantities
                       <textarea
                         required
@@ -597,9 +677,12 @@ export default function PharmacyLanding() {
                       <span className="gm-helper">
                         Include the strength and quantity, if you know them.
                       </span>
-                    </label>
+                    </motion.label>
                   ) : (
-                    <>
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                    >
                       <div
                         className={`gm-dropzone ${drag ? "dragging" : ""}`}
                         onDragOver={(e) => {
@@ -702,9 +785,10 @@ export default function PharmacyLanding() {
                           <a href="#privacy">Details</a>
                         </span>
                       </label>
-                    </>
+                    </motion.div>
                   )}
                 </div>
+                
                 <div className="gm-form-block">
                   <h4>
                     <span>02</span> Choose your preferred branch
@@ -732,6 +816,7 @@ export default function PharmacyLanding() {
                     ))}
                   </div>
                 </div>
+
                 <div className="gm-form-block">
                   <h4>
                     <span>03</span> Where are we delivering?
@@ -821,6 +906,7 @@ export default function PharmacyLanding() {
                     confirmed in chat
                   </p>
                 </div>
+
                 <div className="gm-form-block gm-last-block">
                   <h4>
                     <span>04</span> Pay when it arrives
@@ -856,8 +942,11 @@ export default function PharmacyLanding() {
                   </div>
                 </div>
               </fieldset>
+
               {error && (
-                <div
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
                   ref={errorRef}
                   tabIndex={-1}
                   role="alert"
@@ -865,8 +954,9 @@ export default function PharmacyLanding() {
                 >
                   <AlertCircle size={20} />
                   <span>{error}</span>
-                </div>
+                </motion.div>
               )}
+
               {busy && (
                 <div className="gm-upload-status" role="status">
                   <span>
@@ -886,8 +976,14 @@ export default function PharmacyLanding() {
                   )}
                 </div>
               )}
+
               {readyUrl ? (
-                <div className="gm-ready" role="status">
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="gm-ready" 
+                  role="status"
+                >
                   <Check size={22} />
                   <div>
                     <strong>Your message is ready.</strong>
@@ -906,9 +1002,11 @@ export default function PharmacyLanding() {
                       Edit request
                     </button>
                   </div>
-                </div>
+                </motion.div>
               ) : (
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.015 }}
+                  whileTap={{ scale: 0.985 }}
                   type="submit"
                   className="gm-btn gm-dark gm-submit"
                   disabled={busy}
@@ -920,18 +1018,24 @@ export default function PharmacyLanding() {
                   )}
                   {busy ? "Preparing your request…" : "Continue to WhatsApp"}
                   {!busy && <ArrowUpRight size={21} />}
-                </button>
+                </motion.button>
               )}
               <p className="gm-form-footnote">
                 No payment now. Send the message on WhatsApp to request your
                 order.
               </p>
-            </form>
+            </motion.form>
           </div>
         </section>
 
         <section id="branches" className="gm-container gm-section">
-          <div className="gm-section-heading">
+          <motion.div 
+            initial="hidden" 
+            whileInView="visible" 
+            viewport={{ once: true, margin: "-100px" }}
+            variants={fadeInUp} 
+            className="gm-section-heading"
+          >
             <div>
               <span className="gm-eyebrow">AROUND THE CORNER</span>
               <h2>
@@ -945,10 +1049,17 @@ export default function PharmacyLanding() {
               <br />
               Find the branch closest to you.
             </p>
-          </div>
-          <div className="gm-branches">
+          </motion.div>
+
+          <motion.div 
+            initial="hidden" 
+            whileInView="visible" 
+            viewport={{ once: true, margin: "-100px" }}
+            variants={staggerContainer}
+            className="gm-branches"
+          >
             {BRANCHES.map((item, index) => (
-              <article className="gm-branch" key={item.name}>
+              <motion.article variants={fadeInUp} className="gm-branch" key={item.name}>
                 <div
                   className={`gm-branch-art ${item.tone}`}
                   aria-hidden="true"
@@ -997,12 +1108,19 @@ export default function PharmacyLanding() {
                     </a>
                   </div>
                 </div>
-              </article>
+              </motion.article>
             ))}
-          </div>
+          </motion.div>
         </section>
+
         <section id="about" className="gm-container gm-about">
-          <div className="gm-about-art">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, rotate: -2 }}
+            whileInView={{ opacity: 1, scale: 1, rotate: 0 }}
+            viewport={{ once: true, margin: "-100px" }}
+            transition={{ duration: 0.6 }}
+            className="gm-about-art"
+          >
             <Heart size={70} strokeWidth={1} />
             <span>
               Good health.
@@ -1017,8 +1135,14 @@ export default function PharmacyLanding() {
               <br />
               AT HEART
             </div>
-          </div>
-          <div className="gm-about-copy">
+          </motion.div>
+          <motion.div 
+            initial="hidden" 
+            whileInView="visible" 
+            viewport={{ once: true, margin: "-100px" }}
+            variants={fadeInUp} 
+            className="gm-about-copy"
+          >
             <span className="gm-eyebrow">A NOTE FROM YOUR NEIGHBOURHOOD</span>
             <h2>
               A familiar name.
@@ -1036,10 +1160,16 @@ export default function PharmacyLanding() {
             <a className="gm-text-link" href={`tel:+${PHONE}`}>
               Say hello to our team <ArrowUpRight size={18} />
             </a>
-          </div>
+          </motion.div>
         </section>
+
         <section className="gm-container gm-section gm-faq" id="faq">
-          <div>
+          <motion.div
+            initial="hidden" 
+            whileInView="visible" 
+            viewport={{ once: true, margin: "-100px" }}
+            variants={fadeInUp}
+          >
             <span className="gm-eyebrow">GOOD TO KNOW</span>
             <h2>
               A few helpful
@@ -1055,31 +1185,49 @@ export default function PharmacyLanding() {
             >
               Ask us on WhatsApp <ArrowUpRight size={17} />
             </a>
-          </div>
-          <div>
+          </motion.div>
+          <motion.div
+             initial="hidden" 
+             whileInView="visible" 
+             viewport={{ once: true, margin: "-100px" }}
+             variants={staggerContainer}
+          >
             {FAQ.map(([question, answer]) => (
-              <details key={question}>
+              <motion.details variants={fadeInUp} key={question}>
                 <summary>
                   {question}
                   <ChevronDown size={19} />
                 </summary>
                 <p>{answer}</p>
-              </details>
+              </motion.details>
             ))}
-          </div>
+          </motion.div>
         </section>
-        <section className="gm-container gm-contact-banner">
+
+        <motion.section 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="gm-container gm-contact-banner"
+        >
           <div>
             <span className="gm-eyebrow">
               YOUR NEXT ERRAND? ALREADY EASIER.
             </span>
             <h2>Let’s take care of it.</h2>
           </div>
-          <a href="#order" className="gm-btn gm-lime-btn">
+          <motion.a 
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            href="#order" 
+            className="gm-btn gm-lime-btn"
+          >
             Start your request <ArrowUpRight size={21} />
-          </a>
-        </section>
+          </motion.a>
+        </motion.section>
       </main>
+
       <footer className="gm-footer">
         <div className="gm-container">
           <div className="gm-footer-grid">
@@ -1141,14 +1289,3 @@ export default function PharmacyLanding() {
     </div>
   );
 }
-
-const styles = `
-.gm{--ink:#153f34;--muted:#66716a;--lime:#d8ef8d;--paper:#f7f8f2;color:var(--ink);background:var(--paper);font-family:var(--font-geist-sans),Arial,sans-serif;font-size:15px;line-height:1.6;overflow:clip}.gm *{box-sizing:border-box}.gm h1,.gm h2,.gm h3,.gm h4,.gm p{margin:0}.gm a{color:inherit;text-decoration:none}.gm button,.gm input,.gm textarea{font:inherit}.gm button,.gm a,.gm input,.gm textarea{ -webkit-tap-highlight-color:transparent}.gm button{cursor:pointer}.gm button:disabled{cursor:wait;opacity:.65}.gm svg{flex-shrink:0}.gm :focus-visible{outline:3px solid #418768;outline-offset:4px}.gm ::selection{background:var(--lime);color:var(--ink)}.gm section,.gm #privacy{scroll-margin-top:105px}.gm-container{width:min(1180px,calc(100% - 80px));margin:auto}.gm-announcement{background:var(--ink);color:#e8f2db;padding:9px 40px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:.03em}.gm-announcement span{display:flex;align-items:center;gap:7px}.gm-header{position:sticky;top:0;z-index:30;background:#f7f8f2ed;backdrop-filter:blur(18px);border-bottom:1px solid #153f3412}.gm-nav{height:86px;display:flex;align-items:center;justify-content:space-between;gap:20px}.gm-brand{display:inline-flex;align-items:center;gap:10px;font-size:23px;font-weight:750;letter-spacing:-1.1px;line-height:1.1}.gm-brand-light{font-weight:450}.gm-brand small{display:block;font-size:7px;letter-spacing:1.65px;margin-top:8px;font-weight:600}.gm-mark{height:40px;width:40px;border-radius:13px;background:var(--ink);color:var(--lime);display:grid;place-items:center;transform:rotate(-7deg)}.gm-desktop-nav{display:flex;gap:28px;font-size:12px;font-weight:550}.gm-desktop-nav a:hover,.gm-text-link:hover{color:#567832}.gm-btn{display:inline-flex;align-items:center;justify-content:center;gap:16px;border-radius:100px;padding:17px 25px;min-height:54px;font-weight:600;font-size:13px;border:1px solid transparent;transition:transform .2s,background .2s,box-shadow .2s}.gm-btn:hover{transform:translateY(-2px);box-shadow:0 7px 20px #153f3414}.gm .gm-dark{background:var(--ink);color:white}.gm .gm-dark:hover{background:#245744}.gm-btn-small{padding:12px 19px;min-height:44px;font-size:12px}.gm-menu-toggle{display:none!important}.gm-icon-btn{display:grid;place-items:center;background:transparent;border:1px solid #d8dfd7;border-radius:50%;width:40px;height:40px}.gm-mobile-nav{padding:10px 24px 22px;border-top:1px solid #ddd}.gm-mobile-nav a{display:flex;justify-content:space-between;padding:13px 0}.gm-hero{display:grid;grid-template-columns:1.05fr 1fr;gap:60px;padding-top:65px;padding-bottom:72px;align-items:center}.gm-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:10px;letter-spacing:1.9px;font-weight:700;text-transform:uppercase}.gm-dot{width:7px;height:7px;background:#639145;border-radius:50%;box-shadow:0 0 0 4px #dce9cb}.gm h1{font-size:clamp(64px,6.4vw,87px);line-height:1.01;font-weight:540;letter-spacing:-5px;margin:25px 0;position:relative}.gm-serif{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:400;letter-spacing:-.05em}.gm-heading-star{font-size:68px;color:#8cad61;margin-left:28px;display:inline-block;vertical-align:middle}.gm-hero-copy>p{color:var(--muted);max-width:395px;font-size:15px;line-height:1.8}.gm-actions{display:flex;align-items:center;gap:26px;margin:29px 0 24px}.gm-text-link{display:inline-flex;align-items:center;gap:10px;font-size:12px;font-weight:650;background:none;border:0;padding:0;min-height:38px}.gm-hero-note{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:11px}.gm-hero-note i{width:3px;height:3px;border-radius:50%;background:#98a291;margin:0 7px}.gm-mini-icon{display:grid;place-items:center;background:#e4ecd9;color:var(--ink);border-radius:50%;width:22px;height:22px}.gm-hero-art{height:480px;border-radius:38px;background:#e6eddf;position:relative;overflow:hidden;isolation:isolate}.gm-hero-art:after{content:'';position:absolute;inset:0;z-index:-1;background:radial-gradient(ellipse at 60% 50%,#f9f8de99,transparent 65%)}.gm-art-label{position:absolute;left:24px;bottom:25px;font-size:8px;letter-spacing:2px;writing-mode:vertical-rl;transform:rotate(180deg)}.gm-orbit{position:absolute;border:1px solid #acbda24d;width:480px;height:480px;border-radius:50%;left:60px;top:30px}.gm-orbit-two{width:340px;height:340px;left:130px;top:100px}.gm-bag{position:absolute;width:220px;height:290px;left:calc(50% - 110px);top:130px;transform:rotate(-9deg);filter:drop-shadow(12px 24px 15px #243a2526)}.gm-bag-handle{position:absolute;width:93px;height:91px;border:12px solid #bba77f;border-bottom:0;border-radius:60px 60px 0 0;left:64px;top:-53px;box-shadow:inset 2px 0 2px #826e4840}.gm-bag-face{position:relative;background:linear-gradient(105deg,#e5d4ad,#f0e2c4 65%,#ccba91);height:100%;padding:30px;border-radius:5px 5px 12px 12px;border-right:15px solid #c7b38a;display:flex;flex-direction:column;align-items:flex-start}.gm-bag-cross{color:#315240}.gm-bag-face strong{font-family:Georgia,serif;font-size:30px;line-height:1.05;font-weight:400;letter-spacing:-1px;margin:10px 0 18px}.gm-bag-face>span:last-of-type{font-size:11px;font-weight:700;letter-spacing:-.5px}.gm-bag-line{height:2px;width:100%;background:#52644b55;margin-top:14px}.gm-float{position:absolute;z-index:3;display:flex;align-items:center;gap:11px;padding:14px 17px;background:#ffffffed;border:1px solid white;box-shadow:0 12px 35px #324c2a12;border-radius:16px;animation:gm-float 6s ease-in-out infinite}.gm-float strong{display:block;font-size:10px;font-weight:650}.gm-float small{font-size:9px;color:var(--muted)}.gm-float-top{top:34px;left:25px}.gm-float-bottom{bottom:30px;right:20px;animation-delay:-3s}.gm-circle-icon{background:#edf2e7;width:43px;height:43px;border-radius:50%;display:grid;place-items:center;flex-shrink:0}.gm-lime{background:var(--lime)}.gm-pill{position:absolute;width:60px;height:24px;border-radius:40px;background:linear-gradient(90deg,#fff 50%,#93b27c 50%);box-shadow:3px 7px 10px #34472920;transform:rotate(35deg);right:32px;top:165px}.gm-pill-two{width:48px;height:20px;top:auto;bottom:55px;left:55px;transform:rotate(-40deg)}.gm-art-star{position:absolute;right:42px;top:65px;font-size:61px;color:#547346}.gm-benefit-strip{border-block:1px solid #dce2d6}.gm-benefit-strip>.gm-container{display:flex;align-items:center;justify-content:space-between;padding-block:23px;gap:18px}.gm-benefit-strip span{display:flex;gap:11px;align-items:center;font-size:11px;font-weight:550}.gm-section{padding-top:95px;padding-bottom:95px}.gm-section-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:36px}.gm h2{font-size:45px;line-height:1.12;letter-spacing:-2px;font-weight:500;margin-top:16px}.gm-section-heading>p{font-size:13px;color:var(--muted);line-height:1.9;padding-bottom:4px}.gm-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:23px}.gm-step{border-top:1px solid #bdcbbc;padding:26px 5px 0}.gm-step-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}.gm-step-top>span{font-family:Georgia,serif;font-size:35px;font-style:italic;color:#a8b5a1}.gm-step h3{font-size:17px;font-weight:600;margin-bottom:10px}.gm-step p{color:var(--muted);font-size:13px;max-width:305px}.gm-order-section{background:#eaf0e3;padding:76px 0}.gm-order-grid{display:grid;grid-template-columns:.8fr 1.2fr;gap:75px;align-items:start}.gm-order-intro{position:sticky;top:120px;padding-top:12px}.gm-order-intro h2{font-size:48px}.gm-order-intro>p{color:var(--muted);margin:22px 0;max-width:320px;font-size:14px}.gm-order-note{border-top:1px solid #cbd7c2;border-bottom:1px solid #cbd7c2;padding:25px 0;margin:34px 0 20px;max-width:300px}.gm-order-note h3{font-size:16px;margin:12px 0 8px}.gm-order-note p{font-size:12px;color:var(--muted)}.gm-order-form{padding:32px;background:#fff;border:1px solid #dde5d5;border-radius:24px;box-shadow:0 12px 50px #1f392008;min-width:0}.gm-form-heading{display:flex;gap:13px;align-items:center;padding-bottom:26px;border-bottom:1px solid #e8ede4}.gm-form-heading h3{font-size:19px;font-weight:600;letter-spacing:-.6px}.gm-form-heading p{font-size:11px;color:var(--muted);margin-top:4px}.gm-fieldset{padding:0;border:0;margin:0;min-width:0}.gm-form-block{padding:24px 0;border-bottom:1px solid #e8ede4}.gm-form-block h4{font-size:13px;display:flex;gap:10px;align-items:center;margin-bottom:18px;font-weight:650}.gm-form-block h4>span{font-size:9px;border:1px solid #d9e1d3;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#728268}.gm-segment{display:flex;padding:4px;border-radius:12px;background:#f1f4ed;margin-bottom:18px;gap:4px}.gm-segment button{border:0;background:transparent;display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px;color:#586652;border-radius:9px;padding:11px 7px;flex:1}.gm-segment button.active{background:white;color:var(--ink);box-shadow:0 2px 5px #0000000a;font-weight:650}.gm-label{display:flex;flex-direction:column;gap:7px;font-size:11px;font-weight:600;min-width:0}.gm-label input,.gm-label textarea{width:100%;padding:12px 13px;border:1px solid #dce2d8;background:#fcfdfb;border-radius:9px;outline:none;font-size:12px;color:var(--ink);font-weight:400;transition:border .2s,box-shadow .2s}.gm-label input:focus,.gm-label textarea:focus{border-color:#789966;box-shadow:0 0 0 3px #e9f0df}.gm-label textarea{resize:vertical;min-height:120px;line-height:1.7}.gm-label input::placeholder,.gm-label textarea::placeholder{color:#859080}.gm-helper{font-size:10px!important;font-weight:400;color:#747f6f;display:flex;align-items:center;gap:5px;margin-top:8px!important}.gm-branch-options{display:grid;gap:8px}.gm-radio-card{position:relative;cursor:pointer;display:block;min-width:0}.gm-radio-card>input{position:absolute;opacity:0;width:1px;height:1px}.gm-radio-content{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #e1e6dd;border-radius:10px;transition:background .15s,border .15s}.gm-radio-content strong{font-size:11px;font-weight:600;display:block}.gm-radio-content small{font-size:10px;color:var(--muted);display:block;margin-top:2px}.gm-radio-dot{width:15px;height:15px;border:1px solid #b7c4af;border-radius:50%;margin-left:auto;flex-shrink:0}.gm-radio-card>input:checked+.gm-radio-content{background:#f2f7e9;border-color:#91ab71}.gm-radio-card>input:checked+.gm-radio-content .gm-radio-dot{background:var(--ink);border:4px solid #e0eccf;box-shadow:0 0 0 1px #597d40}.gm-radio-card>input:focus-visible+.gm-radio-content{outline:3px solid #418768;outline-offset:3px}.gm-input-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px}.gm-full{grid-column:1/-1}.gm-payment-options{display:grid;grid-template-columns:1fr 1fr;gap:10px}.gm-last-block{border-bottom:0;padding-bottom:22px}.gm-submit{width:100%;border-radius:12px;justify-content:center;min-height:56px}.gm-submit>svg:last-child{margin-left:auto}.gm-submit>svg:first-child{margin-right:auto}.gm-form-footnote{text-align:center;font-size:9px;color:var(--muted);margin-top:12px!important}.gm-dropzone{border:1.5px dashed #bdcdb1;background:#f8faf4;border-radius:13px;padding:16px}.gm-dropzone.dragging{background:#e8f3d8;border-color:var(--ink)}.gm-upload-prompt{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 0;border:0;background:none;width:100%;color:var(--ink)}.gm-upload-prompt strong{font-size:12px}.gm-upload-prompt>span:last-child{font-size:10px;color:var(--muted)}.gm-consent{display:flex;align-items:flex-start;gap:8px;margin-top:14px;font-size:10px;color:var(--muted)}.gm-consent input{accent-color:var(--ink);margin-top:3px;flex-shrink:0}.gm-consent a{text-decoration:underline}.gm-file-selected{display:flex;align-items:center;gap:12px;min-width:0}.gm-file-selected img{width:65px;height:82px;object-fit:contain;background:white;border-radius:5px}.gm-file-selected>div{min-width:0;flex:1}.gm-file-selected strong{font-size:11px;display:block;overflow-wrap:anywhere}.gm-file-selected small{font-size:10px;color:var(--muted);display:block}.gm-file-selected button{font-size:10px}.gm-file-selected .gm-icon-btn{width:32px;height:32px;flex-shrink:0}.gm-error{display:flex;align-items:flex-start;gap:9px;padding:14px;background:#fff0eb;color:#9a3826;font-size:12px;border:1px solid #f2d1c6;border-radius:10px;margin-bottom:15px}.gm-upload-status{font-size:11px;margin-bottom:16px}.gm-upload-status>span{display:flex;gap:8px;align-items:center}.gm-upload-status progress{width:100%;height:7px;accent-color:var(--ink);margin-top:10px}.gm-spin{animation:gm-spin 1s linear infinite}.gm-ready{display:flex;align-items:flex-start;gap:12px;background:#eef6e3;border-radius:12px;padding:18px}.gm-ready strong{font-size:14px}.gm-ready p{font-size:12px;margin:8px 0 16px}.gm-ready .gm-btn{font-size:11px;padding:12px 16px;min-height:40px}.gm-ready .gm-text-link{display:flex;margin-top:8px}.gm-branches{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}.gm-branch{border:1px solid #e0e5da;border-radius:18px;overflow:hidden;background:#fff;transition:transform .25s}.gm-branch:hover{transform:translateY(-5px)}.gm-branch-art{height:196px;background:#e8eede;position:relative;overflow:hidden}.gm-branch-art.latus{background:#ece8dc}.gm-branch-art.health{background:#e1ebe7}.gm-branch-number{position:absolute;left:20px;top:17px;font-size:8px;letter-spacing:1.4px}.gm-storefront{position:absolute;width:178px;bottom:-5px;left:calc(50% - 89px);background:#f8faf3;box-shadow:10px 6px 0 #8c9e7528;border:1px solid #95a689;border-radius:5px 5px 0 0}.gm-store-sign{height:34px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:650;gap:5px;background:#315242;color:white;border-radius:4px 4px 0 0}.latus .gm-store-sign{background:#78674d}.health .gm-store-sign{background:#4e7271}.gm-awning{height:20px;background:repeating-linear-gradient(90deg,#d2dfbc 0 17px,#f6f7ec 17px 34px);border-bottom:1px solid #9eac8e;transform:skewX(-6deg);width:calc(100% + 10px);margin-left:-5px}.gm-store-windows{display:flex;gap:7px;padding:12px;height:88px}.gm-store-windows>span{display:grid;place-items:center;background:#dce6d1;flex:1;border:1px solid #aabd9c;color:#6a8559}.gm-store-windows>span:nth-child(2){flex:.7;background:#b9caae}.gm-map-pin{position:absolute;right:22px;bottom:24px;width:37px;height:37px;border-radius:50%;background:white;display:grid;place-items:center;box-shadow:0 5px 15px #1e321b15}.gm-branch-body{padding:24px}.gm-branch-body .gm-eyebrow{font-size:8px;letter-spacing:1.2px}.gm-branch-body h3{font-size:19px;font-weight:550;margin-top:8px;letter-spacing:-.5px}.gm-branch-body p{font-size:11px;line-height:1.85;color:var(--muted);min-height:83px;margin:12px 0 18px}.gm-branch-links{border-top:1px solid #e4e9df;padding-top:16px;display:flex;justify-content:space-between;gap:8px}.gm-branch-links a{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600}.gm-about{display:grid;grid-template-columns:1fr 1fr;gap:75px;align-items:center;padding-top:12px;padding-bottom:25px}.gm-about-art{background:var(--ink);color:var(--lime);border-radius:24px;min-height:390px;padding:45px;position:relative;overflow:hidden}.gm-about-art:after{content:'';width:270px;height:270px;border:1px solid #ffffff15;border-radius:50%;position:absolute;right:-120px;top:-100px}.gm-about-art>span{display:block;font-family:Georgia,serif;font-size:48px;line-height:1.1;letter-spacing:-2px;margin:24px 0 27px}.gm-about-art>small{font-size:8px;letter-spacing:2px;color:#bbcdb5}.gm-about-seal{position:absolute;right:23px;bottom:25px;border:1px solid #d8ef8d55;border-radius:50%;width:90px;height:90px;text-align:center;font-size:8px;line-height:1.5;padding-top:12px;transform:rotate(15deg)}.gm-about-seal svg{display:inline;vertical-align:middle}.gm-about-copy>p{color:var(--muted);font-size:13px;line-height:1.9;margin-top:20px}.gm-about-copy>.gm-text-link{margin-top:22px}.gm-faq{display:grid;grid-template-columns:.8fr 1.2fr;gap:75px}.gm-faq>div>p{font-size:13px;color:var(--muted);margin-top:24px;margin-bottom:4px}.gm-faq details{border-bottom:1px solid #dce2d6}.gm-faq summary{padding:23px 0;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:13px;font-weight:600;cursor:pointer}.gm-faq summary::-webkit-details-marker{display:none}.gm-faq summary svg{transition:transform .2s}.gm-faq details[open] summary svg{transform:rotate(180deg)}.gm-faq details>p{color:var(--muted);font-size:12px;line-height:1.9;padding:0 25px 23px 0}.gm-contact-banner{background:var(--ink);color:#fff;border-radius:22px;padding:38px 42px;display:flex;align-items:center;justify-content:space-between;gap:25px;margin-bottom:80px}.gm-contact-banner .gm-eyebrow{color:#bcccab;font-size:8px}.gm-contact-banner h2{font-size:37px;margin-top:8px}.gm .gm-lime-btn{background:var(--lime);color:var(--ink)}.gm-footer{background:#eef1e8;border-top:1px solid #dce2d6;padding:55px 0 20px}.gm-footer-grid{display:grid;grid-template-columns:1.3fr .7fr 1fr 1.2fr;gap:40px;padding-bottom:40px}.gm-footer-grid h3{font-size:11px;font-weight:700;margin-bottom:18px}.gm-footer-grid>div>a:not(.gm-brand),.gm-footer-grid>div>span{font-size:11px;display:flex;align-items:center;gap:7px;margin-bottom:10px;color:#5d6b58}.gm-footer-grid p{font-size:10px;color:#6b7766;line-height:1.9}.gm-footer-grid>div:first-child>p{margin-top:19px;font-size:12px}.gm-footer .gm-brand{font-size:20px}.gm-footer .gm-brand small{font-size:6px;letter-spacing:1.3px}.gm-footer .gm-mark{width:34px;height:34px}.gm-footer-bottom{border-top:1px solid #d7e0cf;padding-top:20px;display:flex;justify-content:space-between;gap:18px;font-size:9px;color:var(--muted)}.gm-mobile-bar{display:none}.gm-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.gm-skip{position:fixed;top:-100px;left:16px;padding:12px;background:white;z-index:100}.gm-skip:focus{top:12px}.gm-hero-copy{animation:gm-entrance .7s ease both}.gm-hero-art{animation:gm-entrance .85s ease both}@keyframes gm-spin{to{transform:rotate(360deg)}}@keyframes gm-float{50%{transform:translateY(-7px)}}@keyframes gm-entrance{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-@media(prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
-@media(min-width:1500px){.gm-hero{padding-block:85px}.gm-hero-art{height:510px}}
-@media(max-width:1050px){.gm-container{width:calc(100% - 48px)}.gm-desktop-nav{gap:17px}.gm-hero{gap:28px}.gm h1{font-size:69px}.gm-hero-art{height:440px}.gm-heading-star{font-size:45px;margin-left:18px}.gm-float-top{left:15px;padding:12px}.gm-float-bottom{right:12px}.gm-order-grid{gap:35px;grid-template-columns:.7fr 1.3fr}.gm-order-intro h2{font-size:40px}.gm-order-form{padding:25px}.gm-about{gap:40px}.gm-about-art{padding:32px}.gm-about-art>span{font-size:43px}.gm-faq{gap:40px}.gm-footer-grid{gap:24px}.gm-branch-body{padding:20px}.gm-branch-body p{min-height:105px}}
-@media(max-width:780px){.gm-announcement{padding-inline:24px}.gm-desktop-nav{display:none}.gm-menu-toggle{display:grid!important}.gm-header-cta{margin-left:auto}.gm-hero{grid-template-columns:1fr 1fr;gap:20px;padding-block:45px}.gm h1{font-size:57px;letter-spacing:-3px}.gm-heading-star{display:none}.gm-eyebrow{font-size:8px;letter-spacing:1.4px}.gm-hero-copy>p{font-size:13px}.gm-actions{gap:14px;align-items:flex-start;flex-direction:column}.gm-hero-note{font-size:9px;gap:5px}.gm-hero-note i{margin-inline:2px}.gm-hero-art{height:410px;border-radius:25px}.gm-bag{width:185px;height:255px;left:calc(50% - 92px);top:115px}.gm-bag-face{padding:23px}.gm-bag-face strong{font-size:26px}.gm-bag-handle{left:45px}.gm-float-top{top:20px;left:12px;gap:6px;padding:10px}.gm-float strong{font-size:8px}.gm-float small{font-size:8px}.gm-float .gm-circle-icon{width:30px;height:30px}.gm-float-bottom{padding:10px;bottom:20px}.gm-art-star{right:18px;top:76px;font-size:44px}.gm-pill-one{right:15px;top:155px;width:40px;height:17px}.gm-benefit-strip>.gm-container{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding-block:20px}.gm-benefit-strip span{font-size:10px}.gm-section{padding-block:65px}.gm h2{font-size:36px}.gm-section-heading>p{font-size:11px}.gm-steps{gap:20px}.gm-step h3{font-size:14px}.gm-step p{font-size:11px}.gm-order-grid{grid-template-columns:1fr;gap:30px}.gm-order-intro{position:static;padding:0}.gm-order-intro h2{font-size:40px}.gm-order-intro h2 br{display:none}.gm-order-intro>p{max-width:100%;margin-bottom:10px}.gm-order-note{display:none}.gm-order-section{padding-block:55px}.gm-order-form{padding:30px}.gm-branches{gap:12px}.gm-branch-body{padding:15px}.gm-branch-body h3{font-size:16px}.gm-branch-body p{font-size:10px;min-height:130px}.gm-branch-links{flex-direction:column;gap:12px}.gm-storefront{width:145px;left:calc(50% - 72px)}.gm-store-sign{font-size:7px}.gm-branch-art{height:170px}.gm-branch-number{font-size:6px;left:12px}.gm-map-pin{right:12px;width:30px;height:30px}.gm-about{gap:30px}.gm-about-art{padding:25px;min-height:370px}.gm-about-art>span{font-size:37px}.gm-about-seal{width:73px;height:73px;font-size:6px;right:15px;bottom:17px}.gm-about-copy>p{font-size:12px}.gm-faq{gap:30px}.gm-contact-banner{padding:30px;margin-bottom:55px}.gm-contact-banner h2{font-size:30px}.gm-footer-grid{grid-template-columns:1fr 1fr;gap:35px}.gm-footer-bottom{flex-wrap:wrap}.gm-footer-bottom>span:nth-child(2){order:3;width:100%}}
-@media(max-width:560px){.gm-container{width:calc(100% - 36px)}.gm-announcement{padding:8px 18px;font-size:9px}.gm-announcement>span:last-child{font-size:8px}.gm-nav{height:72px;gap:12px}.gm-brand{font-size:21px}.gm-brand small{font-size:6px;letter-spacing:1.35px}.gm-mark{width:35px;height:35px}.gm-header-cta{display:none}.gm-menu-toggle{margin-left:auto}.gm-hero{grid-template-columns:1fr;padding-top:38px;padding-bottom:32px;gap:32px}.gm-hero-copy{padding:0 5px}.gm h1{font-size:68px;letter-spacing:-4px;margin:22px 0}.gm-heading-star{display:inline-block;font-size:51px;margin-left:20px}.gm-hero-copy>p{max-width:330px;font-size:14px}.gm-eyebrow{font-size:8px}.gm-actions{flex-direction:row;align-items:center;gap:23px;margin:25px 0 20px}.gm-actions .gm-btn{padding:15px 20px;font-size:12px}.gm-text-link{font-size:11px}.gm-hero-note{font-size:10px}.gm-hero-note i{margin-inline:6px}.gm-hero-art{height:370px;border-radius:23px}.gm-bag{width:187px;height:250px;top:95px}.gm-bag-face{padding:22px}.gm-bag-cross svg{width:51px;height:51px}.gm-float-top{top:20px;left:20px;padding:12px}.gm-float strong{font-size:9px}.gm-float small{font-size:8px}.gm-float-bottom{right:18px;bottom:20px;padding:12px}.gm-art-star{top:57px;right:25px}.gm-art-label{left:18px;font-size:7px}.gm-pill-one{right:25px}.gm-benefit-strip>.gm-container{gap:17px 12px}.gm-benefit-strip span{font-size:9px;gap:8px}.gm-benefit-strip svg{width:16px}.gm-section{padding-block:52px}.gm-section-heading{display:block;margin-bottom:28px}.gm h2{font-size:36px;letter-spacing:-1.7px}.gm-section-heading>p{margin-top:18px;font-size:12px}.gm-steps{grid-template-columns:1fr;gap:24px}.gm-step{padding:20px 0 0;display:grid;grid-template-columns:48px 1fr;gap:0 15px}.gm-step-top{grid-row:1/3;margin:0;align-items:flex-start;position:relative}.gm-step-top>span{font-size:14px;position:absolute;top:38px;left:5px}.gm-step h3{font-size:16px;margin-bottom:6px}.gm-step p{font-size:12px;max-width:none}.gm-order-section{padding-block:45px}.gm-order-intro h2{font-size:38px}.gm-order-intro>p{font-size:13px}.gm-order-form{padding:22px 17px;border-radius:19px}.gm-form-heading h3{font-size:17px}.gm-form-heading{gap:10px}.gm-form-heading p{font-size:10px}.gm-form-heading .gm-circle-icon{width:36px;height:36px}.gm-form-block{padding-block:22px}.gm-form-block h4{font-size:12px}.gm-input-grid{gap:15px 10px}.gm-label{font-size:10px}.gm-label input,.gm-label textarea{font-size:16px;padding:11px;min-width:0}.gm-label input::placeholder,.gm-label textarea::placeholder{font-size:12px}.gm-segment button{font-size:10px;padding:12px 5px;gap:5px}.gm-segment svg{width:15px}.gm-radio-content{padding:12px 11px;gap:9px}.gm-form-footnote{font-size:9px;padding-inline:5px}.gm-submit{font-size:12px;padding-inline:17px}.gm-upload-prompt strong{font-size:11px}.gm-branches{grid-template-columns:1fr;gap:20px}.gm-branch-art{height:185px}.gm-storefront{width:190px;left:calc(50% - 95px)}.gm-store-sign{font-size:10px}.gm-branch-number{font-size:8px;left:20px;top:18px}.gm-map-pin{right:24px;bottom:25px;width:36px;height:36px}.gm-branch-body{padding:23px}.gm-branch-body h3{font-size:21px}.gm-branch-body p{min-height:0;font-size:12px;margin:12px 0 21px}.gm-branch-links{flex-direction:row}.gm-branch-links a{font-size:11px;min-height:30px}.gm-about{grid-template-columns:1fr;gap:32px;padding-block:0}.gm-about-art{min-height:320px;padding:31px}.gm-about-art>span{font-size:43px}.gm-about-art>svg{width:55px;height:55px}.gm-about-seal{width:84px;height:84px;font-size:7px;bottom:24px;right:24px}.gm-about-copy>p{font-size:13px}.gm-faq{grid-template-columns:1fr;gap:15px}.gm-faq summary{font-size:12px;padding-block:22px}.gm-faq details>p{font-size:12px}.gm-contact-banner{flex-direction:column;align-items:flex-start;padding:27px;margin-bottom:45px;border-radius:18px}.gm-contact-banner h2{font-size:31px}.gm-contact-banner .gm-btn{font-size:12px;min-height:48px}.gm-footer{padding-top:38px;padding-bottom:100px}.gm-footer-grid{gap:30px 20px}.gm-footer-grid>div:first-child{grid-column:1/-1}.gm-footer-grid>div:last-child{grid-column:1/-1}.gm-footer-grid>div:last-child p{max-width:100%;font-size:11px}.gm-footer-grid>div>a:not(.gm-brand),.gm-footer-grid>div>span{font-size:11px}.gm-footer-bottom{font-size:9px}.gm-mobile-bar{position:fixed;bottom:0;left:0;right:0;z-index:40;display:flex;align-items:center;gap:12px;padding:10px 18px max(10px,env(safe-area-inset-bottom));background:#f7f8f2f5;backdrop-filter:blur(14px);border-top:1px solid #d7dfd0}.gm-mobile-bar>a:first-child{display:grid;place-items:center;min-width:46px;height:46px;border:1px solid #d5dfcd;border-radius:50%}.gm-mobile-bar .gm-btn{flex:1;min-height:46px;padding-block:11px;font-size:12px}.gm section{scroll-margin-top:88px}}
-@media(max-width:360px){.gm-container{width:calc(100% - 28px)}.gm h1{font-size:60px}.gm-heading-star{font-size:42px}.gm-actions{gap:15px}.gm-actions .gm-btn{padding-inline:16px}.gm-input-grid{grid-template-columns:1fr}.gm-benefit-strip span{font-size:8px}.gm-payment-options{gap:7px}.gm-radio-content>svg{width:19px}.gm-hero-note{font-size:9px}}
-@media(prefers-reduced-motion:reduce){.gm *,.gm *:before,.gm *:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
-`;

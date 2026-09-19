@@ -11,7 +11,7 @@ const geist = Geist({
 export const metadata: Metadata = {
   title: "Goregaonmeds | Your neighbourhood pharmacy, delivered",
   description:
-    "Connect with Apple Pharmacy, Latus Pharmacy and Healthzone & Cosmetic in Goregaon East. Request medicines on WhatsApp and pay at delivery.",
+    "Connect with Apple Pharmacy, Lotus Pharmacy and Healthzone & Cosmetic in Goregaon East. Request medicines on WhatsApp and pay at delivery.",
   applicationName: "Goregaonmeds",
   openGraph: {
     title: "Goregaonmeds — Care, closer to home.",
