@@ -141,8 +141,7 @@
   object-fit: contain;
   display: block;
 
-  /* Generated image me thoda whitespace hai,
-     navbar me logo ko visible banane ke liye */
+  
   transform: scale(1.25);
 }
 
