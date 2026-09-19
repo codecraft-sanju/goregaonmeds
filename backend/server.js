@@ -14,7 +14,7 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 5000);
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_FILE_SIZE = 15 * 1024 * 1024; // Updated from 5 to 15 MB
 
 // --------------------------------------------------
 // Environment validation

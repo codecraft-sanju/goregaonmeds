@@ -10,7 +10,7 @@ import SlideCommit from "./SlideCommit";
 import SplitText from "./SplitText";
 import StrokeText from "./StrokeText";
 import TextType from "./TextType";
-
+import imageCompression from "browser-image-compression";
 import {
   ArrowUpRight,
   Check,
@@ -186,13 +186,16 @@ export default function PharmacyLanding() {
     setError("");
   }
 
-  function selectFile(next?: File) {
+ function selectFile(next?: File) {
     if (!next || submitting.current) return;
     invalidate();
-    if (next.size > 5 * 1024 * 1024) {
-      setError("Please choose an image smaller than 5 MB.");
+    
+    // Limit increased to 15MB since compression will handle the rest
+    if (next.size > 15 * 1024 * 1024) {
+      setError("Please choose an image smaller than 15 MB.");
       return;
     }
+    
     if (
       !next.size ||
       !(
@@ -209,85 +212,111 @@ export default function PharmacyLanding() {
       setError("Choose a JPG, PNG, WEBP, HEIC or HEIF image.");
       return;
     }
+    
     setFile(next);
     cachedUpload.current = null;
     setConsent(false);
   }
 
-  function uploadPrescription(selected: File): Promise<string> {
-    if (cachedUpload.current?.file === selected)
-      return Promise.resolve(cachedUpload.current.url);
-    return new Promise((resolve, reject) => {
-      if (!API) {
-        reject(
-          new Error(
-            "Prescription upload is not configured. Please send your image directly on WhatsApp.",
-          ),
-        );
+ async function uploadPrescription(selected: File): Promise<string> {
+  if (cachedUpload.current?.file === selected)
+    return Promise.resolve(cachedUpload.current.url);
+
+  return new Promise(async (resolve, reject) => { // 'async' add kiya yaha
+    if (!API) {
+      reject(
+        new Error(
+          "Prescription upload is not configured. Please send your image directly on WhatsApp.",
+        ),
+      );
+      return;
+    }
+
+    // --- NEW COMPRESSION LOGIC START ---
+    let fileToUpload = selected;
+    try {
+      const options = {
+        maxSizeMB: 0.8, // Image size ko ~800KB tak limit karega
+        maxWidthOrHeight: 1920, // Prescription padhne ke liye enough resolution
+        useWebWorker: true,
+      };
+      // Compress the image
+      fileToUpload = await imageCompression(selected, options);
+    } catch (error) {
+      console.warn("Image compression failed, falling back to original", error);
+      // Agar kisi wajah se fail hua, toh original file hi upload hone denge
+    }
+    // --- NEW COMPRESSION LOGIC END ---
+
+    const xhr = new XMLHttpRequest();
+    request.current = xhr;
+    xhr.open("POST", `${API}/api/upload`);
+    xhr.timeout = 75000;
+    
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable)
+        setProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          "Could not connect to the upload service. Check your connection or send the image directly on WhatsApp.",
+        ),
+      );
+    xhr.ontimeout = () =>
+      reject(
+        new Error(
+          "Upload took too long. Please retry or send the image directly on WhatsApp.",
+        ),
+      );
+    xhr.onabort = () => reject(new Error("Upload cancelled."));
+    
+    xhr.onload = () => {
+      let data: { url?: string; error?: string } = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        reject(new Error("Unexpected server response. Please try again."));
         return;
       }
-      const xhr = new XMLHttpRequest();
-      request.current = xhr;
-      xhr.open("POST", `${API}/api/upload`);
-      xhr.timeout = 75000;
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable)
-          setProgress(Math.round((event.loaded / event.total) * 100));
-      };
-      xhr.onerror = () =>
-        reject(
-          new Error(
-            "Could not connect to the upload service. Check your connection or send the image directly on WhatsApp.",
-          ),
-        );
-      xhr.ontimeout = () =>
-        reject(
-          new Error(
-            "Upload took too long. Please retry or send the image directly on WhatsApp.",
-          ),
-        );
-      xhr.onabort = () => reject(new Error("Upload cancelled."));
-      xhr.onload = () => {
-        let data: { url?: string; error?: string } = {};
-        try {
-          data = JSON.parse(xhr.responseText);
-        } catch {
-          reject(new Error("Unexpected server response. Please try again."));
-          return;
-        }
-        if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(data.error || "Upload failed. Please try again."));
-          return;
-        }
-        try {
-          if (!data.url || new URL(data.url).protocol !== "https:")
-            throw new Error();
-        } catch {
-          reject(new Error("Upload service returned an invalid image link."));
-          return;
-        }
-        cachedUpload.current = { file: selected, url: data.url! };
-        resolve(data.url!);
-      };
-      const body = new FormData();
-      const ext = selected.name.split(".").pop()?.toLowerCase();
-      const mime =
-        selected.type ||
-        (
-          {
-            heic: "image/heic",
-            heif: "image/heif",
-            jpg: "image/jpeg",
-            jpeg: "image/jpeg",
-            png: "image/png",
-            webp: "image/webp",
-          } as Record<string, string>
-        )[ext || ""] ||
-        "application/octet-stream";
-      body.append("image", new Blob([selected], { type: mime }), selected.name);
-      xhr.send(body);
-    });
-  }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(data.error || "Upload failed. Please try again."));
+        return;
+      }
+      try {
+        if (!data.url || new URL(data.url).protocol !== "https:")
+          throw new Error();
+      } catch {
+        reject(new Error("Upload service returned an invalid image link."));
+        return;
+      }
+      cachedUpload.current = { file: selected, url: data.url! };
+      resolve(data.url!);
+    };
+
+    const body = new FormData();
+    // Use the compressed file (fileToUpload) instead of original (selected)
+    const ext = fileToUpload.name.split(".").pop()?.toLowerCase();
+    const mime =
+      fileToUpload.type ||
+      (
+        {
+          heic: "image/heic",
+          heif: "image/heif",
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          png: "image/png",
+          webp: "image/webp",
+        } as Record<string, string>
+      )[ext || ""] ||
+      "application/octet-stream";
+      
+    // fileToUpload ka use kiya hai buffer create karne ke liye
+    body.append("image", new Blob([fileToUpload], { type: mime }), fileToUpload.name);
+    xhr.send(body);
+  });
+}
 
   // Modified to work smoothly with <SlideCommit />
   async function placeOrder() {
