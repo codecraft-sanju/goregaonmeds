@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
-import "./pharmacy.css"; // IMPORTANT: Replace with your actual path
+import "./pharmacy.css"; 
 
-// --- React Bits Components ---
-// Make sure these files exist in your folder as you provided them
+
+
 import SlideCommit from "./SlideCommit";
 import SplitText from "./SplitText";
 import StrokeText from "./StrokeText";
@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 
-const PHONE = "919987732967";
+const PHONE = "918433818771";
 const API = (
   process.env.NEXT_PUBLIC_API_URL ||
   (process.env.NODE_ENV === "development" ? "http://localhost:5000" : "")
@@ -1347,7 +1347,7 @@ export default function PharmacyLanding() {
             <div>
               <h3>Let’s connect</h3>
               <a href={`tel:+${PHONE}`}>
-                +91 99877 32967 <ArrowUpRight size={14} />
+                +91 84338 18771 <ArrowUpRight size={14} />
               </a>
               <a
                 href={`https://wa.me/${PHONE}`}
@@ -1368,10 +1368,13 @@ export default function PharmacyLanding() {
             </div>
           </div>
           <div className="gm-footer-bottom">
-            <span>© {new Date().getFullYear()} Goregaonmeds.</span>
+            <span>© {new Date().getFullYear()} Goregaonmeds</span>
             <span>
               Availability, pricing and delivery are confirmed by the pharmacy.
             </span>
+            <a href="/admin" style={{ opacity: 0.3, textDecoration: 'none' }} title="Admin Portal">
+    🔒 
+  </a>
             <a href="#home">Back to top ↑</a>
           </div>
         </div>
