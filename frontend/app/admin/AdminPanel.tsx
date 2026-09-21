@@ -107,15 +107,8 @@ export default function AdminPanel() {
     });
   }
 
+  // --- YAHAN CHANGE KIYA HAI ---
   async function saveToDatabase(snapshot: Bill) {
-    const payload = {
-      billId: snapshot.id, reference: snapshot.reference, billedAt: snapshot.createdAt,
-      branch: snapshot.branch, customer: snapshot.customer, phone: snapshot.phone,
-      method: snapshot.method, items: snapshot.items, discount: snapshot.discount,
-      received: snapshot.received, note: snapshot.note
-    };
-    
-    // Agar bill already saved history mein hai, toh PUT req (Edit), warna POST (Create)
     const isExisting = saved.some(s => s.id === snapshot.id);
     const path = isExisting ? `/api/admin/bills/${snapshot.id}` : '/api/admin/bills';
     const method = isExisting ? 'PUT' : 'POST';
@@ -123,7 +116,7 @@ export default function AdminPanel() {
     const data = await api(path, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(snapshot) // Direct snapshot bhejna hai, `billId` map mat karo yahan
     });
     
     // Update frontend state immediately
