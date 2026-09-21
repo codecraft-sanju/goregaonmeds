@@ -1,804 +1,231 @@
-"use client";
+'use client';
 
-import React, { useState, useRef, useEffect } from "react";
-import * as htmlToImage from "html-to-image";
-import {
-  Plus,
-  Trash2,
-  Send,
-  Lock,
-  Receipt,
-  Loader2,
-  LogOut,
-  Printer,
-  Download,
-  Eye,
-  Edit3,
-  CreditCard,
-  Building2,
-  RefreshCw,
-  Phone,
-  User,
-  ShieldCheck,
-  CheckCircle2,
-} from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { toBlob } from 'html-to-image';
+import { ArrowUpRight, ArrowLeft, Check, ChevronRight, Download, Eye, FileText, History, IndianRupee, LayoutDashboard, Loader2, LockKeyhole, LogOut, Plus, Printer, ReceiptText, Search, Send, ShieldCheck, Store, Trash2, X, RefreshCw } from 'lucide-react';
+import { BRANCHES, money, newBill, newItem, totals, validate, paise, type Bill, type Item } from './billing';
+import './admin.css';
 
-const API = (
-  process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === "development" ? "http://localhost:5000" : "")
-).replace(/\/+$/, "");
+const API = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:5000' : '')).replace(/\/+$/, '');
+const date = (value: string) => new Date(value).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+const shortDate = (value: string) => new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata' });
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="ga-field"><span>{label}</span>{children}</label>; }
 
-interface Branch {
-  name: string;
-  tagline: string;
-  address: string;
-  phone: string;
-  dlNo: string;
-  gstin: string;
-}
-
-const BRANCHES: Branch[] = [
-  {
-    name: "Apple Pharmacy",
-    tagline: "Chemists & Druggists",
-    address: "Shop 9, Sheetal Krupa Bldg, Aarey Rd, Goregaon (E), Mumbai 400063",
-    phone: "+91 84338 18771",
-    dlNo: "20B/21B/MH-MZ4-382910",
-    gstin: "27AABCU9603R1ZM",
-  },
-  {
-    name: "Lotus Pharmacy",
-    tagline: "Super Speciality Chemist",
-    address: "Shop 10, Shreyas Bhavan, JP Nagar, Goregaon (E), Mumbai 400063",
-    phone: "+91 84338 18771",
-    dlNo: "20B/21B/MH-MZ4-491024",
-    gstin: "27AABCU9603R1ZM",
-  },
-  {
-    name: "Healthzone & Cosmetic",
-    tagline: "Wellness & Surgical Store",
-    address: "Shop 3, Pednekar Chawl, S.V. Road, Goregaon (W), Mumbai 400104",
-    phone: "+91 84338 18771",
-    dlNo: "20B/21B/MH-MZ4-118492",
-    gstin: "27AABCU9603R1ZM",
-  },
-];
-
-interface InvoiceItem {
-  id: number;
-  name: string;
-  batch?: string;
-  qty: number;
-  price: number;
+function Receipt({ bill }: { bill: Bill }) {
+  const t = totals(bill), branch = BRANCHES[bill.branch];
+  return <article className="ga-receipt">
+    <div className="ga-receipt-brand"><span className="ga-receipt-cross">+</span><span>goregaon<b>meds</b><small>YOUR NEIGHBOURHOOD PHARMACY</small></span></div>
+    <header><h2>{branch.name}</h2><p>{branch.address}</p><p>{branch.phone}</p>{branch.licence && <p>Drug licence: {branch.licence}</p>}{branch.gstin && <p>GSTIN: {branch.gstin}</p>}</header>
+    <div className="ga-receipt-meta"><div><small>BILL SUMMARY</small><strong>{bill.reference || 'Reference pending'}</strong><span>{date(bill.createdAt)} IST</span></div><span className="ga-stamp">{t.total > 0 && t.due === 0 ? 'PAID' : t.received > 0 ? 'PART PAID' : 'UNPAID'}</span></div>
+    <div className="ga-receipt-customer"><small>BILLED TO</small><strong>{bill.customer.trim() || 'Walk-in customer'}</strong>{bill.phone && <span>+91 {bill.phone}</span>}</div>
+    <table><thead><tr><th>Medicine / item</th><th>Qty</th><th>Rate ₹</th><th>Total ₹</th></tr></thead><tbody>{bill.items.filter(i => i.name.trim()).map(i => <tr key={i.id}><td><strong>{i.name}</strong>{(i.batch || i.expiry) && <small>{i.batch && `Batch: ${i.batch}`}{i.expiry && ` · Exp: ${i.expiry}`}</small>}</td><td>{i.qty}</td><td>{(paise(i.rate)/100).toFixed(2)}</td><td>{(paise(i.rate)*Number(i.qty)/100).toFixed(2)}</td></tr>)}</tbody></table>
+    {!bill.items.some(i=>i.name.trim()) && <p className="ga-receipt-empty">Your medicines will appear here.</p>}
+    <div className="ga-receipt-totals"><p><span>Subtotal</span><b>{money(t.gross)}</b></p>{t.discount > 0 && <p><span>Discount</span><b>− {money(t.discount)}</b></p>}<p className="ga-receipt-total"><span>Total amount</span><b>{money(t.total)}</b></p><p><span>Received · {bill.method}</span><b>{money(t.received)}</b></p><p><span>Balance due</span><b>{money(t.due)}</b></p></div>
+    {bill.note.trim() && <p className="ga-receipt-note">{bill.note}</p>}
+    <footer><strong>A little care, closer to home.</strong><p>Thank you for choosing your neighbourhood pharmacy.</p><small>Bill summary • Not a GST tax invoice.<br/>Request an official tax invoice from the pharmacy, if required.</small></footer>
+  </article>;
 }
 
 export default function AdminPanel() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"edit" | "preview">("edit");
+  const [token, setToken] = useState('');
+  const tokenRef = useRef('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [bill, setBill] = useState<Bill | null>(null);
+  const [saved, setSaved] = useState<Bill[]>([]);
+  const [view, setView] = useState<'billing'|'history'>('billing');
+  const [query, setQuery] = useState('');
+  const [mobilePreview, setMobilePreview] = useState(false);
+  const [busy, setBusy] = useState('');
+  const lock = useRef(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [dialog, setDialog] = useState<'new'|'logout'|'share'|null>(null);
+  const [shareConsent, setShareConsent] = useState(false);
+  const [ready, setReady] = useState('');
+  const exportRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDialogElement>(null);
+  const uploadCache = useRef<{key:string;url:string}|null>(null);
+  const mounted = useRef(true);
+  const controller = useRef<AbortController | null>(null);
+  const expiryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dirty = !!bill && (bill.items.some(i=>i.name || i.rate) || !!bill.customer || !!bill.phone);
 
-  // Bill State
-  const [invoiceNo, setInvoiceNo] = useState("");
-  const [branchIdx, setBranchIdx] = useState(0);
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [paymentMode, setPaymentMode] = useState<"UPI" | "Cash" | "Card">("UPI");
-  const [items, setItems] = useState<InvoiceItem[]>([
-    { id: 1, name: "Paracetamol 650mg (Dolo)", batch: "DL248", qty: 2, price: 32 },
-  ]);
-  const [discount, setDiscount] = useState<number>(0);
-  const [isTaxIncluded, setIsTaxIncluded] = useState(true);
+  useEffect(() => { setBill(newBill()); mounted.current = true; return () => { mounted.current = false; controller.current?.abort(); if(expiryTimer.current) clearTimeout(expiryTimer.current); }; }, []);
+  useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
+  useEffect(() => { if(dialog) modalRef.current?.showModal(); else modalRef.current?.close(); }, [dialog]);
+  useEffect(() => { const handler = (e: BeforeUnloadEvent) => { if(dirty) { e.preventDefault(); e.returnValue = ''; } }; window.addEventListener('beforeunload',handler); return ()=>window.removeEventListener('beforeunload',handler); }, [dirty]);
 
-  const billRef = useRef<HTMLDivElement>(null);
-
-  // Auto-generate invoice id
-  const generateNewInvoiceId = () => {
-    const random = Math.floor(1000 + Math.random() * 9000);
-    const code = `GM-${new Date().getFullYear().toString().slice(-2)}${random}`;
-    setInvoiceNo(code);
-  };
-
-  useEffect(() => {
-    generateNewInvoiceId();
-  }, []);
-
-  // Totals calculations
-  const subTotal = items.reduce((acc, item) => acc + (Number(item.qty) || 0) * (Number(item.price) || 0), 0);
-  const discountAmount = Math.min(discount, subTotal);
-  const taxableAmount = subTotal - discountAmount;
-  const gstRate = 0.05; // 5% GST standard medical estimate
-  const gstAmount = isTaxIncluded ? (taxableAmount * gstRate) / (1 + gstRate) : taxableAmount * gstRate;
-  const grandTotal = isTaxIncluded ? taxableAmount : taxableAmount + gstAmount;
-
-  // --- Auth Handler ---
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setLoginError("");
-    try {
-      const res = await fetch(`${API}/api/admin/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      if (res.ok) {
-        setIsLoggedIn(true);
-      } else {
-        setLoginError("Invalid administrator key");
-      }
-    } catch {
-      setLoginError("Backend service unavailable");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // --- Item Operations ---
-  const addItem = () => {
-    setItems((prev) => [...prev, { id: Date.now(), name: "", batch: "", qty: 1, price: 0 }]);
-  };
-
-  const removeItem = (id: number) => {
-    if (items.length <= 1) return;
-    setItems((prev) => prev.filter((item) => item.id !== id));
-  };
-
-  const updateItem = (id: number, field: keyof InvoiceItem, val: string | number) => {
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: val } : item))
-    );
-  };
-
-  // Snapshot generation
-  const createBillBlob = async (): Promise<Blob> => {
-    if (!billRef.current) throw new Error("Preview reference missing");
-    return await htmlToImage.toBlob(billRef.current, {
-      quality: 0.98,
-      pixelRatio: 2.5,
-      backgroundColor: "#ffffff",
-      cacheBust: true,
-    }) as Blob;
-  };
-
-  // 1. Send via WhatsApp
-  const generateAndSend = async () => {
-    if (!customerPhone || items.length === 0 || !items[0].name.trim()) {
-      alert("Please provide the customer's phone number and at least 1 medicine name.");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const blob = await createBillBlob();
-      const formData = new FormData();
-      formData.append("image", blob, `${invoiceNo}.png`);
-
-      const uploadRes = await fetch(`${API}/api/upload`, {
-        method: "POST",
-        body: formData,
-      });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
-
-      const branch = BRANCHES[branchIdx];
-      const message = `*INVOICE: ${branch.name.toUpperCase()}*\nInvoice No: *#${invoiceNo}*\nPatient: *${customerName || "Customer"}*\nDate: ${new Date().toLocaleDateString("en-IN")}\n\n*Total Payable:* ₹${grandTotal.toFixed(2)}\n*Payment Mode:* ${paymentMode}\n\n📄 *Download Digital Receipt:*\n${uploadData.url}\n\n_Thank you for choosing Goregaonmeds! Get well soon._`;
-
-      const waUrl = `https://wa.me/91${customerPhone}?text=${encodeURIComponent(message)}`;
-      window.open(waUrl, "_blank");
-    } catch (err: any) {
-      alert(err.message || "Failed to process receipt");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 2. Download Image directly
-  const downloadReceiptImage = async () => {
-    if (!billRef.current) return;
-    try {
-      const dataUrl = await htmlToImage.toPng(billRef.current, { pixelRatio: 2.5 });
-      const link = document.createElement("a");
-      link.download = `${invoiceNo}_Bill.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch {
-      alert("Could not render image for download");
-    }
-  };
-
-  // 3. Native print
-  const handlePrint = () => {
-    window.print();
-  };
-
-  // Reset form
-  const handleReset = () => {
-    if (confirm("Clear all items and customer info?")) {
-      setItems([{ id: Date.now(), name: "", batch: "", qty: 1, price: 0 }]);
-      setDiscount(0);
-      setCustomerName("");
-      setCustomerPhone("");
-      generateNewInvoiceId();
-    }
-  };
-
-  // ---------------------------------------------------------------------------
-  // AUTH VIEW
-  // ---------------------------------------------------------------------------
-  if (!isLoggedIn) {
-    return (
-      <div className="min-h-screen bg-[#081a15] flex items-center justify-center p-4 selection:bg-[#c9e265] selection:text-[#081a15]">
-        <div className="w-full max-w-md bg-[#0d2720] border border-[#1d463a] rounded-3xl p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-48 h-48 bg-[#c9e265]/5 rounded-full blur-3xl pointer-events-none" />
-          <div className="flex flex-col items-center text-center mb-8">
-            <div className="w-16 h-16 bg-[#184236] border border-[#276453] rounded-2xl flex items-center justify-center text-[#c9e265] mb-4 shadow-inner">
-              <ShieldCheck size={32} />
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Goregaonmeds Admin</h1>
-            <p className="text-sm text-emerald-400/70 mt-1">Authorized billing & dispensation terminal</p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-5">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-emerald-200/80 mb-2">
-                Security Password
-              </label>
-              <div className="relative">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  required
-                  className="w-full bg-[#113229] border border-[#204f42] rounded-xl px-4 py-3.5 text-white placeholder-emerald-800 text-sm focus:outline-none focus:border-[#c9e265] focus:ring-1 focus:ring-[#c9e265] transition"
-                />
-                <Lock className="absolute right-3.5 top-3.5 text-emerald-600" size={18} />
-              </div>
-              {loginError && <p className="text-rose-400 text-xs mt-2 font-medium">{loginError}</p>}
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3.5 px-4 bg-[#c9e265] hover:bg-[#b8d453] active:scale-[0.99] text-[#081a15] font-bold rounded-xl flex items-center justify-center gap-2 transition shadow-lg shadow-[#c9e265]/10 disabled:opacity-50"
-            >
-              {loading ? <Loader2 className="animate-spin" size={18} /> : "Unlock Dashboard"}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
+  const update = (patch: Partial<Bill>) => { setBill(b=>b ? {...b,...patch} : b); setReady(''); setError(''); setNotice(''); uploadCache.current=null; };
+  const itemUpdate = (id: string, patch: Partial<Item>) => { if(bill) update({ items: bill.items.map(i=> i.id === id ? {...i,...patch} : i) }); };
+  
+  function forgetSession(clearBill: boolean) {
+    tokenRef.current=''; setToken(''); setPassword(''); setReady(''); uploadCache.current=null;
+    if(expiryTimer.current) clearTimeout(expiryTimer.current);
+    if(clearBill) { setBill(newBill()); setSaved([]); setView('billing'); setNotice(''); setError(''); }
   }
 
-  const currentBranch = BRANCHES[branchIdx];
+  async function api(path: string, options: RequestInit = {}) {
+    const headers = new Headers(options.headers);
+    if(tokenRef.current) headers.set('Authorization', `Bearer ${tokenRef.current}`);
+    const response = await fetch(`${API}${path}`, {...options, headers, signal: controller.current?.signal});
+    const data = await response.json().catch(()=>({error:'The server returned an unreadable response.'}));
+    if(!response.ok) {
+      if(response.status === 401 && path !== '/api/admin/login') forgetSession(false);
+      throw new Error(data.error || `Request failed (${response.status}).`);
+    }
+    return data;
+  }
 
-  // ---------------------------------------------------------------------------
-  // MAIN DASHBOARD VIEW
-  // ---------------------------------------------------------------------------
-  return (
-    <div className="min-h-screen bg-[#f3f5f4] text-slate-800 flex flex-col antialiased">
-      {/* Top Header */}
-      <header className="sticky top-0 z-30 bg-[#0d2720] border-b border-[#1c4539] text-white px-4 md:px-8 py-3.5 flex items-center justify-between shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="bg-[#c9e265] p-2 rounded-lg text-[#0d2720]">
-            <Receipt size={20} />
-          </div>
-          <div>
-            <h1 className="font-bold tracking-tight text-base md:text-lg text-white leading-none">
-              Goregaonmeds
-            </h1>
-            <span className="text-[11px] text-[#c9e265] font-mono font-medium tracking-wide">
-              Smart Invoice POS v3.2
-            </span>
-          </div>
-        </div>
+  async function task(label: string, action: ()=>Promise<void>) {
+    if(lock.current) return;
+    lock.current=true; setBusy(label); setError(''); setNotice('');
+    controller.current=new AbortController();
+    const timeout=setTimeout(()=>controller.current?.abort(),90000);
+    try { await action(); } catch(e) { if(mounted.current) setError(e instanceof Error ? (e.name==='AbortError'?'Request timed out. Please retry.':e.message) : 'Something went wrong. Please retry.'); }
+    finally { clearTimeout(timeout); controller.current=null; lock.current=false; if(mounted.current) setBusy(''); }
+  }
 
-        {/* Mobile View Toggle */}
-        <div className="flex lg:hidden bg-[#153f33] p-1 rounded-xl border border-[#215747]">
-          <button
-            onClick={() => setActiveTab("edit")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
-              activeTab === "edit" ? "bg-[#c9e265] text-[#0d2720]" : "text-emerald-300"
-            }`}
-          >
-            <Edit3 size={14} /> Form
-          </button>
-          <button
-            onClick={() => setActiveTab("preview")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
-              activeTab === "preview" ? "bg-[#c9e265] text-[#0d2720]" : "text-emerald-300"
-            }`}
-          >
-            <Eye size={14} /> Bill
-          </button>
-        </div>
+  // --- API INTEGRATIONS START ---
 
-        {/* Actions Bar */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleReset}
-            title="Reset Invoice"
-            className="p-2 text-emerald-300 hover:text-white hover:bg-[#184236] rounded-lg transition"
-          >
-            <RefreshCw size={18} />
-          </button>
-          <button
-            onClick={() => setIsLoggedIn(false)}
-            className="flex items-center gap-1.5 bg-[#173e33] hover:bg-[#205143] border border-[#255e4e] px-3 py-2 rounded-xl text-xs font-medium text-emerald-200 hover:text-white transition"
-          >
-            <LogOut size={15} />
-            <span className="hidden sm:inline">Sign Out</span>
-          </button>
-        </div>
-      </header>
+  async function loadHistory() {
+    try {
+      const data = await api('/api/admin/bills?limit=50');
+      if (data.bills) setSaved(data.bills);
+    } catch(e) { console.error("Failed to load history"); }
+  }
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 lg:p-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          
-          {/* ============================================================ */}
-          {/* LEFT FORM PANEL (Col 7) */}
-          {/* ============================================================ */}
-          <section
-            className={`lg:col-span-7 space-y-6 ${
-              activeTab === "preview" ? "hidden lg:block" : "block"
-            }`}
-          >
-            {/* Quick Settings Card */}
-            <div className="bg-white rounded-3xl p-5 md:p-6 border border-slate-200/80 shadow-sm space-y-5">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                <div className="flex items-center gap-2">
-                  <Building2 className="text-[#0d2720]" size={18} />
-                  <h2 className="font-bold text-slate-900 text-sm tracking-wide uppercase">
-                    Pharmacy & Invoice Config
-                  </h2>
-                </div>
-                <div className="flex items-center gap-2 font-mono text-xs font-bold text-emerald-900 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
-                  <span>INV:</span>
-                  <span className="text-[#0d2720]">{invoiceNo}</span>
-                </div>
-              </div>
+  async function login(e: FormEvent) {
+    e.preventDefault();
+    await task('Signing in', async()=> {
+      const data = await api('/api/admin/login',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password}) });
+      if(typeof data.token!=='string' || !Number.isFinite(data.expiresAt)) throw new Error('Update the backend using the included admin-api.js integration.');
+      tokenRef.current=data.token; setToken(data.token); setPassword('');
+      expiryTimer.current=setTimeout(()=>{forgetSession(false); setError('Session expired. Sign in again to continue your draft.');},Math.max(0,data.expiresAt-Date.now()));
+      await loadHistory();
+    });
+  }
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-slate-600 mb-1.5 block">
-                    Fulfillment Branch
-                  </label>
-                  <select
-                    value={branchIdx}
-                    onChange={(e) => setBranchIdx(Number(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-sm rounded-xl p-2.5 focus:bg-white focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none transition"
-                  >
-                    {BRANCHES.map((b, idx) => (
-                      <option key={idx} value={idx}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+  async function saveToDatabase(snapshot: Bill) {
+    const payload = {
+      billId: snapshot.id, reference: snapshot.reference, billedAt: snapshot.createdAt,
+      branch: snapshot.branch, customer: snapshot.customer, phone: snapshot.phone,
+      method: snapshot.method, items: snapshot.items, discount: snapshot.discount,
+      received: snapshot.received, note: snapshot.note
+    };
+    
+    // Agar bill already saved history mein hai, toh PUT req (Edit), warna POST (Create)
+    const isExisting = saved.some(s => s.id === snapshot.id);
+    const path = isExisting ? `/api/admin/bills/${snapshot.id}` : '/api/admin/bills';
+    const method = isExisting ? 'PUT' : 'POST';
 
-                <div>
-                  <label className="text-xs font-bold text-slate-600 mb-1.5 block">
-                    Payment Mode
-                  </label>
-                  <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-xl">
-                    {(["UPI", "Cash", "Card"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setPaymentMode(mode)}
-                        className={`text-xs py-2 font-bold rounded-lg transition ${
-                          paymentMode === mode
-                            ? "bg-white text-[#0d2720] shadow-sm"
-                            : "text-slate-500 hover:text-slate-900"
-                        }`}
-                      >
-                        {mode}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+    const data = await api(path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    // Update frontend state immediately
+    setSaved(old => [data.bill, ...old.filter(b => b.id !== data.bill.id)]);
+  }
 
-              {/* Customer Inputs */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                <div>
-                  <label className="text-xs font-bold text-slate-600 mb-1.5 flex items-center gap-1.5">
-                    <User size={13} /> Patient / Customer Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Ramesh Shah"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-sm rounded-xl p-2.5 focus:bg-white focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none transition"
-                  />
-                </div>
+  async function deleteBill(id: string) {
+    if (!window.confirm('Are you sure you want to delete this bill permanently?')) return;
+    await task('Deleting bill', async () => {
+      await api(`/api/admin/bills/${id}`, { method: 'DELETE' });
+      setSaved(old => old.filter(b => b.id !== id));
+      setNotice('Bill deleted successfully.');
+      if (bill?.id === id) setBill(newBill()); // Agar wahi bill open tha, clear kardo
+    });
+  }
 
-                <div>
-                  <label className="text-xs font-bold text-slate-600 mb-1.5 flex items-center gap-1.5">
-                    <Phone size={13} /> WhatsApp Mobile Number *
-                  </label>
-                  <div className="flex">
-                    <span className="inline-flex items-center px-3 text-xs font-semibold text-slate-500 bg-slate-100 border border-r-0 border-slate-200 rounded-l-xl">
-                      +91
-                    </span>
-                    <input
-                      type="tel"
-                      placeholder="9876543210"
-                      value={customerPhone}
-                      onChange={(e) =>
-                        setCustomerPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
-                      }
-                      className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-sm rounded-r-xl p-2.5 focus:bg-white focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none transition font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
+  // --- API INTEGRATIONS END ---
 
-            {/* Items Table Card */}
-            <div className="bg-white rounded-3xl p-5 md:p-6 border border-slate-200/80 shadow-sm space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h3 className="font-bold text-slate-900 text-sm tracking-wide uppercase">
-                  Medicine & Supply Items ({items.length})
-                </h3>
-                <button
-                  type="button"
-                  onClick={addItem}
-                  className="bg-[#0d2720] hover:bg-[#173e33] active:scale-95 text-[#c9e265] text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition"
-                >
-                  <Plus size={14} /> Add Medicine
-                </button>
-              </div>
+  function check(requirePhone=false) { const message=bill ? validate(bill,requirePhone) : 'Please wait for the bill to load.'; if(message) {setError(message); return false;} return true; }
 
-              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
-                {items.map((item, index) => (
-                  <div
-                    key={item.id}
-                    className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-200/70 transition flex flex-col sm:flex-row gap-2.5 items-center"
-                  >
-                    <span className="text-xs font-mono font-bold text-slate-400 w-5 text-center hidden sm:block">
-                      {index + 1}
-                    </span>
+  async function blob() {
+    if(!exportRef.current) throw new Error('Receipt is not ready. Please retry.');
+    await document.fonts.ready;
+    const result=await toBlob(exportRef.current,{pixelRatio:2,backgroundColor:'#fff',skipFonts:true, width:480});
+    if(!result || result.size===0) throw new Error('Receipt could not be rendered. Try printing instead.');
+    if(result.size>15*1024*1024) throw new Error('This receipt image exceeds 15 MB. Print to PDF instead.');
+    return result;
+  }
+  
+  function download(data: Blob, filename: string) { const url=URL.createObjectURL(data); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(url),30000); }
+  
+  function downloadImage() { 
+    if(!check() || !bill) return; 
+    void task('Rendering receipt', async()=>{
+      download(await blob(), `${bill.reference.replace(/[^a-zA-Z0-9_-]/g,'_')}.png`); 
+      await saveToDatabase(bill); 
+      setNotice('Receipt downloaded & bill saved.');
+    }); 
+  }
+  
+  function printBill() { 
+    if(!check() || !bill) return; 
+    void task('Saving before print', async () => {
+      await saveToDatabase(bill);
+      window.print();
+    });
+  }
+  
+  function exportSession() { download(new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),bills:saved},null,2)],{type:'application/json'}),'goregaonmeds-session.json'); setNotice('Database history exported to JSON.'); }
+  
+  function share() { if(check(true)) {setShareConsent(false); setDialog('share');} }
+  
+  async function prepareShare() {
+    if(!bill || !shareConsent || !check(true)) return;
+    const snapshot=structuredClone(bill);
+    setDialog(null);
+    await task('Preparing WhatsApp',async()=> {
+      await saveToDatabase(snapshot); // Save to DB before sharing
+      const key=JSON.stringify(snapshot);
+      let url=uploadCache.current?.key===key ? uploadCache.current.url : '';
+      if(!url) {
+        const form=new FormData(); form.append('image',await blob(),'receipt.png');
+        const data=await api('/api/admin/upload',{method:'POST',body:form});
+        const parsed=new URL(data.url);
+        if(parsed.protocol!=='https:') throw new Error('The upload service returned an invalid receipt link.');
+        url=parsed.href; uploadCache.current={key,url};
+      }
+      const t=totals(snapshot);
+      const message=`*${BRANCHES[snapshot.branch].name} — Bill summary*\nReference: ${snapshot.reference}\nCustomer: ${snapshot.customer || 'Walk-in customer'}\nDate: ${date(snapshot.createdAt)} IST\n\nTotal: ${money(t.total)}\nReceived (${snapshot.method}): ${money(t.received)}\nBalance due: ${money(t.due)}\n\nView your bill:\n${url}\n\nThank you for choosing Goregaonmeds.`;
+      setReady(`https://wa.me/91${snapshot.phone}?text=${encodeURIComponent(message)}`); setNotice('Your WhatsApp message is ready. Open it below and tap Send in WhatsApp.');
+    });
+  }
+  
+  async function logout() { setDialog(null); await task('Signing out',async()=>{ await api('/api/admin/logout',{method:'POST'}); forgetSession(true); }); }
+  const alert = error ? <div className="ga-alert ga-alert-error" role="alert" tabIndex={-1} ref={errorRef}>{error}<button type="button" aria-label="Dismiss error" onClick={()=>setError('')}><X size={16}/></button></div> : null;
 
-                    {/* Medicine Name & Batch */}
-                    <div className="flex-1 w-full grid grid-cols-3 gap-2">
-                      <input
-                        type="text"
-                        placeholder="Item name (e.g. Augmentin 625)"
-                        value={item.name}
-                        onChange={(e) => updateItem(item.id, "name", e.target.value)}
-                        className="col-span-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs md:text-sm font-medium focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Batch"
-                        value={item.batch || ""}
-                        onChange={(e) => updateItem(item.id, "batch", e.target.value)}
-                        className="col-span-1 bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-mono uppercase focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none"
-                      />
-                    </div>
-
-                    {/* Numeric Controls */}
-                    <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
-                      <div className="flex items-center gap-1">
-                        <span className="text-[11px] text-slate-400 sm:hidden">Qty:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          placeholder="Qty"
-                          value={item.qty || ""}
-                          onChange={(e) =>
-                            updateItem(item.id, "qty", Math.max(1, Number(e.target.value)))
-                          }
-                          className="w-16 bg-white border border-slate-200 rounded-xl p-2 text-xs md:text-sm text-center font-bold focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        <span className="text-[11px] text-slate-400 sm:hidden">₹ Rate:</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          placeholder="Price"
-                          value={item.price || ""}
-                          onChange={(e) =>
-                            updateItem(item.id, "price", Math.max(0, Number(e.target.value)))
-                          }
-                          className="w-20 bg-white border border-slate-200 rounded-xl p-2 text-xs md:text-sm text-right font-mono font-bold focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none"
-                        />
-                      </div>
-
-                      <div className="w-16 text-right font-mono text-xs font-bold text-slate-700 hidden sm:block">
-                        ₹{(item.qty * item.price).toFixed(2)}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => removeItem(item.id)}
-                        disabled={items.length === 1}
-                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition disabled:opacity-20"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Discounts & Adjustments */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
-                <div>
-                  <label className="text-xs font-bold text-slate-600 mb-1 block">
-                    Discount Concession (₹)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={discount || ""}
-                    placeholder="0.00"
-                    onChange={(e) => setDiscount(Math.max(0, Number(e.target.value)))}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-sm rounded-xl p-2.5 font-mono focus:bg-white focus:ring-2 focus:ring-[#0d2720]/20 focus:border-[#0d2720] outline-none"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between sm:justify-end gap-3 pt-5 sm:pt-4">
-                  <label className="text-xs font-bold text-slate-600 cursor-pointer select-none">
-                    Taxes Included in MRP
-                  </label>
-                  <input
-                    type="checkbox"
-                    checked={isTaxIncluded}
-                    onChange={(e) => setIsTaxIncluded(e.target.checked)}
-                    className="w-5 h-5 accent-[#0d2720] rounded cursor-pointer"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Dispatch Actions */}
-            <div className="bg-gradient-to-br from-[#0d2720] to-[#143c32] rounded-3xl p-6 text-white shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div>
-                <span className="text-xs text-[#c9e265] uppercase tracking-wider font-semibold">
-                  Grand Amount
-                </span>
-                <div className="text-3xl font-extrabold font-mono text-white tracking-tight">
-                  ₹{grandTotal.toFixed(2)}
-                </div>
-              </div>
-
-              <div className="flex w-full sm:w-auto items-center gap-2">
-                <button
-                  type="button"
-                  onClick={generateAndSend}
-                  disabled={loading}
-                  className="flex-1 sm:flex-initial bg-[#c9e265] hover:bg-[#b8d453] text-[#0d2720] font-bold px-6 py-3.5 rounded-2xl flex items-center justify-center gap-2 transition active:scale-95 shadow-lg shadow-[#c9e265]/20 disabled:opacity-50"
-                >
-                  {loading ? (
-                    <Loader2 className="animate-spin" size={18} />
-                  ) : (
-                    <>
-                      <Send size={18} />
-                      <span>Send WhatsApp Bill</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          {/* ============================================================ */}
-          {/* RIGHT PREVIEW PANEL (Col 5) */}
-          {/* ============================================================ */}
-          <section
-            className={`lg:col-span-5 flex flex-col items-center ${
-              activeTab === "edit" ? "hidden lg:flex" : "flex"
-            }`}
-          >
-            {/* Live Actions Bar */}
-            <div className="w-full max-w-[400px] flex items-center justify-between mb-3 px-1">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                <CheckCircle2 size={14} className="text-emerald-600" /> Live Receipt
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={downloadReceiptImage}
-                  title="Download Image"
-                  className="p-2 text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition shadow-sm text-xs font-semibold flex items-center gap-1"
-                >
-                  <Download size={14} /> PNG
-                </button>
-                <button
-                  onClick={handlePrint}
-                  title="Print Slip"
-                  className="p-2 text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition shadow-sm text-xs font-semibold flex items-center gap-1"
-                >
-                  <Printer size={14} /> Print
-                </button>
-              </div>
-            </div>
-
-            {/* ============================================================ */}
-            {/* INVOICE CANVAS (Rendered Target for html-to-image) */}
-            {/* ============================================================ */}
-            <div className="w-full flex justify-center overflow-x-auto pb-6">
-              <div
-                ref={billRef}
-                className="w-[380px] bg-white border border-slate-300/80 shadow-2xl p-6 relative select-none"
-                style={{
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                  color: "#111827",
-                }}
-              >
-                {/* Pharmacy Header */}
-                <div className="text-center border-b-2 border-black pb-3 mb-3">
-                  <div className="inline-block px-2.5 py-0.5 mb-1 bg-black text-white text-[10px] uppercase font-bold tracking-widest">
-                    {currentBranch.tagline}
-                  </div>
-                  <h1 className="text-xl font-black uppercase tracking-tight text-black leading-tight">
-                    {currentBranch.name}
-                  </h1>
-                  <p className="text-[10px] text-gray-700 leading-tight mt-1 px-4">
-                    {currentBranch.address}
-                  </p>
-                  <div className="flex justify-center gap-3 text-[10px] font-semibold mt-1.5 text-gray-800">
-                    <span>Ph: {currentBranch.phone}</span>
-                    <span>•</span>
-                    <span>DL: {currentBranch.dlNo.split("/")[0]}</span>
-                  </div>
-                  <p className="text-[9px] text-gray-500 font-mono">
-                    GSTIN: {currentBranch.gstin}
-                  </p>
-                </div>
-
-                {/* Metadata Row */}
-                <div className="text-[11px] mb-3 pb-2 border-b border-dashed border-gray-400 space-y-1">
-                  <div className="flex justify-between font-bold">
-                    <span>INVOICE: #{invoiceNo}</span>
-                    <span className="bg-gray-100 px-1.5 rounded uppercase text-[10px]">
-                      {paymentMode}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-gray-600 text-[10px]">
-                    <span>Date: {new Date().toLocaleDateString("en-IN")}</span>
-                    <span>
-                      {new Date().toLocaleTimeString("en-IN", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between pt-1 text-black font-semibold">
-                    <span>Patient: {customerName ? customerName : "Cash Patient"}</span>
-                    <span>Mob: {customerPhone ? `+91-${customerPhone}` : "N/A"}</span>
-                  </div>
-                </div>
-
-                {/* Items Table */}
-                <table className="w-full text-[11px] mb-3 border-collapse">
-                  <thead>
-                    <tr className="border-b-2 border-black text-black">
-                      <th className="py-1 text-left font-extrabold uppercase">Item</th>
-                      <th className="py-1 text-center font-extrabold uppercase w-10">Qty</th>
-                      <th className="py-1 text-right font-extrabold uppercase w-12">Rate</th>
-                      <th className="py-1 text-right font-extrabold uppercase w-16">Amt</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items
-                      .filter((i) => i.name.trim() !== "")
-                      .map((item, idx) => (
-                        <tr key={idx} className="border-b border-gray-200 border-dotted">
-                          <td className="py-1.5 pr-1 align-top">
-                            <div className="font-bold text-black leading-tight">
-                              {item.name}
-                            </div>
-                            {item.batch && (
-                              <div className="text-[9px] text-gray-500 uppercase">
-                                B:{item.batch}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-1.5 text-center align-top font-bold">
-                            {item.qty}
-                          </td>
-                          <td className="py-1.5 text-right align-top text-gray-700">
-                            {item.price.toFixed(2)}
-                          </td>
-                          <td className="py-1.5 text-right align-top font-bold text-black">
-                            {(item.qty * item.price).toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-
-                {/* Totals Summary */}
-                <div className="border-t-2 border-black pt-2 mb-3 text-[11px] space-y-1">
-                  <div className="flex justify-between text-gray-600">
-                    <span>Gross Subtotal:</span>
-                    <span>₹{subTotal.toFixed(2)}</span>
-                  </div>
-
-                  {discountAmount > 0 && (
-                    <div className="flex justify-between text-emerald-800 font-semibold">
-                      <span>Discount / Subsidy:</span>
-                      <span>- ₹{discountAmount.toFixed(2)}</span>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between text-gray-600 text-[10px]">
-                    <span>
-                      Est. GST (5% {isTaxIncluded ? "incl." : "added"}):
-                    </span>
-                    <span>₹{gstAmount.toFixed(2)}</span>
-                  </div>
-
-                  <div className="flex justify-between font-black text-sm border-t-2 border-black pt-1.5 mt-1 text-black">
-                    <span>NET PAYABLE:</span>
-                    <span>₹{grandTotal.toFixed(2)}</span>
-                  </div>
-                </div>
-
-                {/* QR & Legal Footer */}
-                <div className="border-t border-dashed border-gray-400 pt-3 text-center space-y-2">
-                  <div className="flex justify-center items-center gap-2">
-                    {/* Simulated Clean Thermal QR */}
-                    <div className="w-12 h-12 border-2 border-black p-0.5 grid grid-cols-4 gap-0.5 bg-black">
-                      <div className="bg-white"></div>
-                      <div className="bg-black"></div>
-                      <div className="bg-white"></div>
-                      <div className="bg-white"></div>
-                      <div className="bg-black"></div>
-                      <div className="bg-white"></div>
-                      <div className="bg-black"></div>
-                      <div className="bg-white"></div>
-                      <div className="bg-white"></div>
-                      <div className="bg-black"></div>
-                      <div className="bg-white"></div>
-                      <div className="bg-black"></div>
-                      <div className="bg-black"></div>
-                      <div className="bg-white"></div>
-                      <div className="bg-black"></div>
-                      <div className="bg-white"></div>
-                    </div>
-                  </div>
-
-                  <div className="text-[9px] text-gray-600 leading-tight">
-                    <p className="font-bold text-black uppercase">
-                      Thank you! Wish you a speedy recovery.
-                    </p>
-                    <p className="mt-0.5">
-                      Prescription medicines once dispensed cannot be returned without batch
-                      validation.
-                    </p>
-                    <p className="mt-1 font-mono text-[8px] text-gray-400">
-                      Terminal Verified: Goregaonmeds Cloud System
-                    </p>
-                  </div>
-                </div>
-
-                {/* Zigzag Perforated Paper Edge Effect (CSS) */}
-                <div
-                  className="absolute left-0 right-0 -bottom-2 h-2"
-                  style={{
-                    background:
-                      "linear-gradient(135deg, transparent 4px, white 0) top left, linear-gradient(-135deg, transparent 4px, white 0) top right",
-                    backgroundSize: "8px 8px",
-                    backgroundRepeat: "repeat-x",
-                  }}
-                />
-              </div>
-            </div>
-          </section>
-
-        </div>
-      </main>
-    </div>
-  );
+  if(!token) return <div className="ga ga-login"><div className="ga-login-story"><a href="/" className="ga-wordmark"><span className="ga-logo">+</span>goregaon<span>meds</span></a><div><span className="ga-kicker">THE NEIGHBOURHOOD DESK</span><h1>Good care.<br/><em>Beautifully<br/>organised.</em></h1><p>A calmer space for your pharmacy’s everyday billing.</p></div><span className="ga-login-foot">THREE BRANCHES. ONE NEIGHBOURHOOD. <span>✳</span></span></div><main className="ga-login-main"><div className="ga-login-card"><span className="ga-lock-icon"><LockKeyhole size={24}/></span><span className="ga-kicker">STAFF ACCESS</span><h2>Welcome to your desk.</h2><p>Sign in to prepare bills and share a little care.</p><form onSubmit={login}>{alert}<Field label="Administrator password"><span className="ga-password"><input autoFocus type={showPassword?'text':'password'} autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required maxLength={256} placeholder="Enter your password"/><button type="button" aria-label={showPassword?'Hide password':'Show password'} aria-pressed={showPassword} onClick={()=>setShowPassword(!showPassword)}><Eye size={18}/></button></span></Field><button className="ga-btn ga-primary" disabled={!!busy}>{busy?<Loader2 className="ga-spin" size={18}/>:<>Open billing studio <ArrowUpRight size={19}/></>}</button></form><small><ShieldCheck size={15}/> Access is verified by your pharmacy server.</small><a className="ga-back" href="/"><ArrowLeft size={15}/> Back to Goregaonmeds</a></div></main></div>;
+  if(!bill) return <div className="ga">Loading billing studio…</div>;
+  const t=totals(bill);
+  const filtered=saved.filter(b=>`${b.reference} ${b.customer} ${b.phone} ${BRANCHES[b.branch].name}`.toLowerCase().includes(query.toLowerCase()));
+  
+  return <div className="ga ga-app">
+    <aside className="ga-sidebar ga-no-print"><a href="/" className="ga-wordmark"><span className="ga-logo">+</span>goregaon<span>meds</span></a><span className="ga-sidebar-label">PHARMACY WORKSPACE</span><nav aria-label="Admin navigation"><button className={view==='billing'?'active':''} onClick={()=>setView('billing')} disabled={!!busy}><LayoutDashboard size={19}/> Billing studio <ChevronRight size={15}/></button><button className={view==='history'?'active':''} onClick={()=>{setView('history'); void loadHistory();}} disabled={!!busy}><History size={19}/> Server history <span className="ga-count">{saved.length}</span></button></nav><div className="ga-sidebar-note"><span>✳</span><h3>Local care.<br/>A little closer.</h3><p>Thoughtful billing, from your neighbourhood pharmacy.</p><span className="ga-location-dot"/> GOREGAON EAST</div><button className="ga-signout" onClick={()=>setDialog('logout')} disabled={!!busy}><LogOut size={17}/> Sign out</button></aside>
+    <div className="ga-workspace ga-no-print"><header className="ga-topbar"><span>Workspace <ChevronRight size={13}/> <b>{view==='billing'?'Billing studio':'Server history'}</b></span><span className="ga-staff"><span>HC</span> Pharmacy desk <button aria-label="Sign out" onClick={()=>setDialog('logout')} disabled={!!busy}><LogOut size={16}/></button></span></header>
+    <main className="ga-main"><div className="ga-page-heading"><div><span className="ga-kicker">{shortDate(bill.createdAt)} · GOREGAON EAST</span><h1>{view==='billing'?'Every bill, a little care.':'Your history, safely stored.'}</h1><p>{view==='billing'?'Prepare, review and share. All from one thoughtful workspace.':'Bills securely saved on the database. Edit or manage records easily.'}</p></div><button className="ga-btn ga-primary" onClick={()=>setDialog('new')} disabled={!!busy}><Plus size={18}/> New bill</button></div>
+    <nav className="ga-mobile-nav" aria-label="Workspace sections"><button className={view==='billing'?'active':''} onClick={()=>setView('billing')} disabled={!!busy}><ReceiptText size={16}/> Billing</button><button className={view==='history'?'active':''} onClick={()=>{setView('history'); void loadHistory();}} disabled={!!busy}><History size={16}/> History ({saved.length})</button></nav>
+    {alert}{notice && <div className="ga-alert" role="status"><Check size={17}/>{notice}<button aria-label="Dismiss notification" onClick={()=>setNotice('')}><X size={15}/></button></div>}
+    {view==='billing' ? <>
+      <div className="ga-stats"><div><span className="ga-stat-icon"><ReceiptText size={20}/></span><span>Bill total<strong>{money(t.total)}</strong></span><small>Current bill</small></div><div><span className="ga-stat-icon"><IndianRupee size={20}/></span><span>Balance due<strong>{money(t.due)}</strong></span><small>{t.received>0?'Payment recorded':'Awaiting payment'}</small></div><div><span className="ga-stat-icon"><Store size={20}/></span><span>Serving from<strong className="ga-stat-branch">{BRANCHES[bill.branch].name}</strong></span><small>{BRANCHES[bill.branch].area}</small></div></div>
+      <div className="ga-mobile-tabs"><button className={!mobilePreview?'active':''} onClick={()=>setMobilePreview(false)}>Edit bill</button><button className={mobilePreview?'active':''} onClick={()=>setMobilePreview(true)}>Receipt preview</button></div>
+      <div className={`ga-billing-grid ${mobilePreview?'ga-show-preview':''}`}>
+      <fieldset className="ga-editor" disabled={!!busy}><legend className="ga-sr">Bill editor</legend>
+        <section className="ga-card"><div className="ga-card-title"><span className="ga-step">01</span><div><h2>The essentials</h2><p>Branch, customer and bill details.</p></div><span className="ga-chip">{saved.some(s=>s.id===bill.id) ? 'Editing' : 'Draft'}</span></div><div className="ga-fields"><Field label="Pharmacy branch"><select value={bill.branch} onChange={e=>update({branch:Number(e.target.value)})}>{BRANCHES.map((b,i)=><option value={i} key={b.name}>{b.name}</option>)}</select></Field><Field label="Bill reference"><input value={bill.reference} onChange={e=>update({reference:e.target.value})} maxLength={50}/></Field><Field label="Customer name · optional"><input value={bill.customer} onChange={e=>update({customer:e.target.value})} maxLength={80} placeholder="Walk-in customer" autoComplete="off"/></Field><Field label="WhatsApp number"><div className="ga-phone"><span>+91</span><input type="tel" inputMode="numeric" value={bill.phone} onChange={e=>update({phone:e.target.value.replace(/\D/g,'').slice(0,10)})} maxLength={10} placeholder="10-digit mobile" autoComplete="off" aria-label="Customer WhatsApp number"/></div></Field></div></section>
+        <section className="ga-card"><div className="ga-card-title"><span className="ga-step">02</span><div><h2>Medicines & essentials</h2><p>Use the selling price for the quantity unit entered.</p></div><span className="ga-chip">{bill.items.length} items</span></div><div className="ga-items">{bill.items.map((item,index)=><div className="ga-item" key={item.id}><div className="ga-item-top"><span className="ga-item-index">{String(index+1).padStart(2,'0')}</span><Field label={`Medicine ${index+1}`}><input value={item.name} onChange={e=>itemUpdate(item.id,{name:e.target.value})} placeholder="Medicine name, strength & pack" maxLength={160}/></Field><button className="ga-icon-button ga-remove" type="button" aria-label={`Remove medicine ${index+1}`} disabled={bill.items.length===1} onClick={()=>update({items:bill.items.filter(i=>i.id!==item.id)})}><Trash2 size={16}/></button></div><div className="ga-item-details"><Field label="Batch"><input value={item.batch} onChange={e=>itemUpdate(item.id,{batch:e.target.value})} maxLength={30} placeholder="Optional"/></Field><Field label="Expiry"><input type="month" value={item.expiry} onChange={e=>itemUpdate(item.id,{expiry:e.target.value})}/></Field><Field label="Qty"><input type="number" min={1} max={9999} step={1} value={item.qty} onChange={e=>itemUpdate(item.id,{qty:e.target.value})}/></Field><Field label="Rate ₹"><input type="number" min={0} max={9999999.99} step="0.01" value={item.rate} onChange={e=>itemUpdate(item.id,{rate:e.target.value})} placeholder="0.00"/></Field><div className="ga-line-total"><span>Amount</span><strong>{money(paise(item.rate)*(Number(item.qty)||0))}</strong></div></div></div>)}</div><button className="ga-add-item" onClick={()=>update({items:[...bill.items,newItem()]})} disabled={bill.items.length>=50}><Plus size={17}/> Add another medicine <span>{bill.items.length}/50</span></button></section>
+        <section className="ga-card"><div className="ga-card-title"><span className="ga-step">03</span><div><h2>A little finishing touch</h2><p>Discount, payment and a note for your customer.</p></div></div><div className="ga-fields"><Field label="Discount ₹"><input type="number" min={0} step="0.01" value={bill.discount} onChange={e=>update({discount:e.target.value})}/></Field><Field label="Amount received ₹"><input type="number" min={0} step="0.01" value={bill.received} onChange={e=>update({received:e.target.value})}/></Field></div><div className="ga-payment-row"><div><span className="ga-label">Payment method</span><div className="ga-segment">{(['UPI','Cash','Card'] as const).map(method=><button type="button" key={method} aria-pressed={bill.method===method} className={bill.method===method?'active':''} onClick={()=>update({method})}>{method}</button>)}</div></div><button type="button" className="ga-text-button" onClick={()=>update({received:(t.total/100).toFixed(2)})}><Check size={15}/> Mark fully paid</button></div><Field label="Customer note · optional"><textarea value={bill.note} onChange={e=>update({note:e.target.value})} rows={2} maxLength={300} placeholder="Add a short message for your customer…"/></Field><p className="ga-hint">Entered selling prices are used as-is. No estimated GST is added.</p></section>
+      <button type="button" className="ga-btn ga-primary ga-review-mobile" onClick={()=>{if(check()){setMobilePreview(true);window.scrollTo({top:0,behavior:'instant'});}}}>Review & share bill <ArrowUpRight size={18}/></button>
+      </fieldset>
+      <aside className="ga-preview-panel"><div className="ga-preview-heading"><span><span className="ga-live-dot"/> LIVE PREVIEW</span><div><button className="ga-icon-button" aria-label="Download receipt PNG" onClick={downloadImage} disabled={!!busy}><Download size={17}/></button><button className="ga-icon-button" aria-label="Print receipt" onClick={printBill} disabled={!!busy}><Printer size={17}/></button></div></div><div className="ga-paper-stage"><Receipt bill={bill}/></div><div className="ga-dispatch"><div><span>Ready for your customer</span><strong>{money(t.total)}</strong><small>{t.units} units · {bill.items.length} line items</small></div><button className="ga-btn ga-lime" onClick={share} disabled={!!busy}>{busy?<><Loader2 size={17} className="ga-spin"/>{busy}…</>:<><Send size={17}/> Prepare WhatsApp bill <ArrowUpRight size={17}/></>}</button><div className="ga-secondary-actions"><button onClick={downloadImage} disabled={!!busy}><Download size={15}/> PNG</button><button onClick={printBill} disabled={!!busy}><Printer size={15}/> Print / PDF</button><button onClick={()=>{if(check()){ void task('Saving to database', async()=>{ await saveToDatabase(bill!); setNotice('Bill saved successfully.'); }); }}} disabled={!!busy}><History size={15}/> Save to Database</button></div><p>Review the details before sharing.</p></div>{ready && <a className="ga-btn ga-whatsapp" href={ready} target="_blank" rel="noopener noreferrer">Open WhatsApp & send <ArrowUpRight size={18}/></a>}</aside>
+      </div>
+    </> : <section className="ga-card ga-history"><div className="ga-history-head"><div><h2>Server history <span className="ga-chip">{saved.length}</span></h2><p>Bills saved in the database.</p></div><div style={{display: 'flex', gap: '8px'}}><button className="ga-btn ga-outline" onClick={()=>void task('Refreshing', loadHistory)} disabled={!!busy}><RefreshCw size={16}/> Refresh</button><button className="ga-btn ga-outline" onClick={exportSession} disabled={!saved.length}><Download size={16}/> Export JSON</button></div></div><label className="ga-search"><Search size={18}/><input aria-label="Search session bills" placeholder="Search customer, branch or reference…" value={query} onChange={e=>setQuery(e.target.value)}/></label>{filtered.length ? <div className="ga-history-table"><table><thead><tr><th>Bill / customer</th><th>Branch</th><th>Total</th><th>Balance</th><th/></tr></thead><tbody>{filtered.map(b=><tr key={b.id}><td><strong>{b.customer || 'Walk-in customer'}</strong><small>{b.reference} · {shortDate(b.createdAt)}</small></td><td>{BRANCHES[b.branch].name}</td><td>{money(totals(b).total)}</td><td>{money(totals(b).due)}</td><td><div style={{display:'flex',gap:'4px'}}><button className="ga-icon-button" aria-label={`Reopen bill ${b.reference}`} onClick={()=>{if(dirty && !window.confirm('Replace the current draft with this saved bill?'))return;setBill(structuredClone(b));setReady('');setError('');setNotice('');uploadCache.current=null;setView('billing');}}><ArrowUpRight size={17}/></button><button className="ga-icon-button ga-remove" aria-label={`Delete bill ${b.reference}`} onClick={()=>deleteBill(b.id)}><Trash2 size={17}/></button></div></td></tr>)}</tbody></table></div>:<div className="ga-empty"><FileText size={34}/><h3>{query?'No matching bills.':'A fresh start.'}</h3><p>{query?'Try another name or reference.':'Saved bills from the database will appear here.'}</p></div>}</section>}
+    <footer className="ga-workspace-footer"><span>Goregaonmeds / Billing studio</span><span>Made for your neighbourhood. <span>✳</span></span></footer></main></div>
+    <div className="ga-export" aria-hidden="true"><div ref={exportRef}><Receipt bill={bill}/></div></div>
+    <dialog className="ga-dialog" ref={modalRef} onCancel={e=>{e.preventDefault();if(!busy)setDialog(null);}}><div className="ga-dialog-body"><button className="ga-dialog-close ga-icon-button" aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={18}/></button>{dialog==='share'?<><span className="ga-lock-icon"><Send size={23}/></span><h2>One final check.</h2><p>Prepare this bill for <strong>+91 {bill.phone}</strong>. Total: <strong>{money(t.total)}</strong>.</p><label className="ga-share-consent"><input type="checkbox" checked={shareConsent} onChange={e=>setShareConsent(e.target.checked)}/><span>I have checked the recipient and have permission to upload this bill. The Cloudinary link will be viewable by anyone who has it.</span></label><button className="ga-btn ga-primary" disabled={!shareConsent || !!busy} onClick={()=>void prepareShare()}>Prepare message <ArrowUpRight size={17}/></button><small>You will tap Send yourself in WhatsApp.</small></>:<><h2>{dialog==='new'?'Start a fresh bill?':'Close your desk?'}</h2><p>{dialog==='new'?'Your current draft will be replaced. Save it to the database first if you need it.':'Signing out clears your draft screen.'}</p><div className="ga-dialog-actions"><button className="ga-btn ga-outline" onClick={()=>setDialog(null)}>Keep working</button><button className="ga-btn ga-primary" onClick={()=>{if(dialog==='logout'){void logout();return;}setBill(newBill());setReady('');setNotice('');setError('');uploadCache.current=null;setMobilePreview(false);setView('billing');setDialog(null);}}> {dialog==='new'?'New bill':'Sign out'}</button></div></>}</div></dialog>
+  </div>;
 }

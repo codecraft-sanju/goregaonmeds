@@ -1,15 +1,7 @@
-import AdminPanel from "./AdminPanel"; 
-
-
-export const metadata = {
-  title: "Admin Portal | Goregaonmeds",
+import AdminPanel from './AdminPanel';
+import type { Metadata } from 'next';
+export const metadata: Metadata = {
+  title: 'Billing studio | Goregaonmeds',
+  robots: { index: false, follow: false },
 };
-
-export default function AdminPage() {
-  return (
-    // Tailwind classes will perfectly work here!
-    <main>
-      <AdminPanel />
-    </main>
-  );
-}
+export default function AdminPage() { return <AdminPanel />; }

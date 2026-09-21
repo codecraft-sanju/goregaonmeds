@@ -5,3 +5,88 @@ body {
   background-color: #f7f8f2;
   font-family: var(--font-geist-sans), Arial, sans-serif;
 }
+
+/* @import "tailwindcss"; */
+
+/* Design tokens formerly declared as CSS variables in pharmacy.css (.gm) and admin.css (.ga). */
+@theme {
+  --font-sans: var(--font-geist-sans), Arial, sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+
+  --color-gm-ink: #153f34;
+  --color-gm-muted: #66716a;
+  --color-gm-lime: #d8ef8d;
+  --color-gm-paper: #f7f8f2;
+
+  --color-ga-forest: #163e32;
+  --color-ga-dark: #102e26;
+  --color-ga-lime: #d9eda7;
+  --color-ga-ink: #233a32;
+  --color-ga-muted: #758077;
+  --color-ga-line: #e3e8df;
+  --color-ga-bg: #f5f6f1;
+
+  --animate-float: float 6s ease-in-out infinite;
+
+  @keyframes float {
+    50% {
+      transform: translateY(-7px);
+    }
+  }
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Tailwind v4 preflight no longer sets a pointer cursor on buttons. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 3px solid #418768;
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    background: var(--color-gm-lime);
+    color: var(--color-gm-ink);
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* @page cannot be expressed as a utility class. */
+  @media print {
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+    html,
+    body {
+      background: white !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+  }
+}
