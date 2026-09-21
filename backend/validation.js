@@ -34,12 +34,17 @@ function totals(bill) {
 /** Returns { value } with a normalised bill, or { error } with a user-facing message. */
 function parseBill(input) {
   if (!isPlainObject(input)) return { error: 'Send the bill as a JSON object.' };
-  if (typeof input.id !== 'string' || !UUID.test(input.id)) return { error: 'The bill ID is invalid.' };
+
+  // YAHAN FIX KIYA HAI: Yeh dono accept karega (id ya billId) taaki cache/deployment ka koi issue na ho
+  const incomingId = typeof (input.id || input.billId) === 'string' ? (input.id || input.billId).trim() : '';
+  if (!incomingId || !UUID.test(incomingId)) return { error: 'The bill ID is invalid.' };
 
   const reference = text(input.reference, 50);
   if (!reference) return { error: 'Enter a bill reference (up to 50 characters).' };
 
-  const billedAt = new Date(typeof input.createdAt === 'string' ? input.createdAt : NaN);
+  // YAHAN FIX KIYA HAI: Yeh dono accept karega (createdAt ya billedAt)
+  const incomingDate = input.createdAt || input.billedAt;
+  const billedAt = new Date(typeof incomingDate === 'string' ? incomingDate : NaN);
   if (Number.isNaN(billedAt.getTime()) || billedAt.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
     return { error: 'The bill date is invalid.' };
   }
@@ -57,10 +62,14 @@ function parseBill(input) {
   if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) {
     return { error: 'Add between 1 and 50 medicines.' };
   }
+  
   const items = [];
   for (const [index, raw] of input.items.entries()) {
     const row = index + 1;
-    if (!isPlainObject(raw) || typeof raw.id !== 'string' || !UUID.test(raw.id)) return { error: `Row ${row} is invalid.` };
+    // Yahan bhi double check laga diya hai
+    const itemId = typeof (raw.id || raw.itemId) === 'string' ? (raw.id || raw.itemId).trim() : '';
+    if (!isPlainObject(raw) || !itemId || !UUID.test(itemId)) return { error: `Row ${row} is invalid.` };
+    
     const name = text(raw.name, 160);
     if (!name) return { error: `Enter the medicine name in row ${row}.` };
     const batch = text(raw.batch ?? '', 30);
@@ -73,7 +82,7 @@ function parseBill(input) {
     if (typeof raw.rate !== 'string' || !MONEY.test(raw.rate)) {
       return { error: `Row ${row}: enter a non-negative rate with at most 2 decimal places.` };
     }
-    items.push({ id: raw.id, name, batch, expiry, qty: String(Number(raw.qty)), rate: raw.rate });
+    items.push({ id: itemId, name, batch, expiry, qty: String(Number(raw.qty)), rate: raw.rate });
   }
 
   if (typeof input.discount !== 'string' || !MONEY.test(input.discount)) return { error: 'Enter a valid discount amount.' };
@@ -83,9 +92,10 @@ function parseBill(input) {
   if (note === null) return { error: 'Customer note must be 300 characters or fewer.' };
 
   const bill = {
-    billId: input.id, reference, billedAt, branch: input.branch, customer, phone: input.phone,
+    billId: incomingId, reference, billedAt, branch: input.branch, customer, phone: input.phone,
     method: input.method, items, discount: input.discount, received: input.received, note,
   };
+  
   const computed = totals(bill);
   if (paise(bill.discount) > computed.gross) return { error: 'Discount cannot exceed the subtotal.' };
   if (computed.received > computed.total) return { error: 'Amount received cannot exceed the bill total.' };
