@@ -1,0 +1,19 @@
+/* First Order Offer styling for the admin panel. Loaded after admin.css. */
+.ga-offer{display:flex;align-items:center;gap:13px;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:#fff;margin-bottom:22px}
+.ga-offer-icon{display:grid;place-items:center;width:40px;height:40px;flex-shrink:0;border-radius:11px;background:#f1f5ea;color:var(--forest)}
+.ga-offer-body{min-width:0;flex:1}
+.ga-offer strong{display:block;font-size:13px;font-weight:650;letter-spacing:-.2px;line-height:1.45}
+.ga-offer p{font-size:11px;color:var(--muted);margin-top:3px!important;line-height:1.6}
+.ga-offer-promo{background:linear-gradient(100deg,#f3f8e8,#fff 72%);border-color:#d7e5c0}
+.ga-offer-ready{background:linear-gradient(100deg,#e6f3cc,#fbfdf6 76%);border-color:#b9d693}
+.ga-offer-ready .ga-offer-icon{background:var(--lime);color:var(--dark)}
+.ga-offer-won{background:var(--forest);border-color:var(--forest);color:#f1f6e8}
+.ga-offer-won .ga-offer-icon{background:var(--lime);color:var(--dark)}
+.ga-offer-won p{color:#bfd0b3}
+.ga-offer-muted{background:#fafbf7}
+.ga-offer-muted .ga-offer-icon{background:#eff1eb;color:#9aa391}
+.ga-offer-meter{display:block;height:5px;margin-top:9px;border-radius:99px;background:#e5ecdb;overflow:hidden}
+.ga-offer-meter>span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#8fb45b,var(--forest));transition:width .3s}
+.ga-receipt .ga-receipt-gift td{background:#f5f9ec}
+.ga-receipt .ga-receipt-gift td:last-child{font-weight:700;color:var(--forest)}
+@media(max-width:760px){.ga-offer{align-items:flex-start;padding:13px}.ga-offer strong{font-size:12px}}

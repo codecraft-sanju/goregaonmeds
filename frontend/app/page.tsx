@@ -1,4 +1,3 @@
-//frontend/app/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -10,6 +9,7 @@ import {
   ChevronDown,
   Clock,
   FileText,
+  Gift,
   Heart,
   MapPin,
   Menu,
@@ -29,7 +29,8 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { fetchSavedProfile, forgetProfile, saveProfile } from "./customerProfile";
-import { fetchDeliveryCharge, formatRupees } from "./storeSettings";
+import { fetchStoreSettings, firstOrderOfferText, formatRupees, freeGiftLabel, type FirstOrderOffer } from "./storeSettings";
+import { toMobileInput } from "./phone";
 
 // Decorative / below-the-fold widgets are split into their own chunks.
 const StrokeText = dynamic(() => import("./StrokeText"), { ssr: false });
@@ -129,7 +130,8 @@ const EMPTY_CUSTOMER: Customer = { name: "", phone: "", house: "", area: "", lan
 
 const CUSTOMER_FIELDS = [
   { key: "name", label: "Full name", placeholder: "Your name", auto: "name", max: 80 },
-  { key: "phone", label: "Mobile number", placeholder: "10-digit mobile number", auto: "tel-national", max: 10 },
+  // 16 lets a pasted "+91 98765 43210" through; onChange reduces it to 10 digits.
+  { key: "phone", label: "Mobile number", placeholder: "10-digit mobile number", auto: "tel-national", max: 16 },
   { key: "house", label: "Flat / house & building", placeholder: "Flat no., floor, building name", auto: "address-line1", max: 180 },
   { key: "area", label: "Area / locality", placeholder: "e.g. Aarey Road", auto: "address-line2", max: 100 },
   { key: "landmark", label: "Landmark (optional)", placeholder: "A nearby landmark", auto: "off", max: 100 },
@@ -197,6 +199,11 @@ const staggerContainer = {
 function deliveryMessageLine(charge: number | null): string {
   if (charge === null) return "Delivery charge to be confirmed";
   return charge === 0 ? "FREE delivery" : `Delivery charge: ${formatRupees(charge)} (added to the medicine total)`;
+}
+
+function offerMessageSection(offer: FirstOrderOffer | null): string {
+  if (!offer) return "";
+  return `\n\n*First Order Offer 🎁*\nIf this is my first order and the medicine total is ${formatRupees(offer.minSubtotal)}+ (before delivery), please add: ${freeGiftLabel(offer.giftName)}`;
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -287,6 +294,8 @@ export default function PharmacyLanding() {
   const [drag, setDrag] = useState(false);
   // Paise, as set by the admin. Null until loaded (or if the backend is unreachable).
   const [deliveryCharge, setDeliveryCharge] = useState<number | null>(null);
+  // Offer terms come from the backend; eligibility is decided there when the bill is saved.
+  const [firstOrderOffer, setFirstOrderOffer] = useState<FirstOrderOffer | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const request = useRef<XMLHttpRequest | null>(null);
@@ -346,9 +355,11 @@ export default function PharmacyLanding() {
   useEffect(() => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
-    fetchDeliveryCharge(API, controller.signal)
-      .then((charge) => {
-        if (charge !== null) setDeliveryCharge(charge);
+    fetchStoreSettings(API, controller.signal)
+      .then((settings) => {
+        if (!settings) return;
+        if (settings.deliveryCharge !== null) setDeliveryCharge(settings.deliveryCharge);
+        setFirstOrderOffer(settings.firstOrderOffer);
       })
       .catch(() => {
         // Shown as "confirmed on WhatsApp"; placeOrder retries before building the message.
@@ -429,7 +440,8 @@ export default function PharmacyLanding() {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       request.current = xhr;
-      xhr.open("POST", `${API}/api/admin/upload`); // FIXED TO ADMIN UPLOAD ROUTE
+      // Public customer route. /api/admin/upload needs an admin session and accepts PNG receipts only.
+      xhr.open("POST", `${API}/api/upload`);
       xhr.timeout = 75000;
 
       xhr.upload.onprogress = (event) => {
@@ -514,18 +526,21 @@ export default function PharmacyLanding() {
       : hasSavedProfile
         ? forgetProfile(API)
         : Promise.resolve();
-    // Re-read the charge so the message reflects any change the admin made while this page was open.
-    const chargeTask = fetchDeliveryCharge(API, AbortSignal.timeout(4000)).catch(() => null);
+    // Re-read settings so the message reflects any change the admin made while this page was open.
+    const settingsTask = fetchStoreSettings(API, AbortSignal.timeout(4000)).catch(() => null);
 
     try {
       const imageUrl = mode === "prescription" ? await uploadPrescription(file!) : "";
-      const latestCharge = (await chargeTask) ?? deliveryCharge;
+      const latestSettings = await settingsTask;
+      const latestCharge = latestSettings?.deliveryCharge ?? deliveryCharge;
+      const latestOffer = latestSettings ? latestSettings.firstOrderOffer : firstOrderOffer;
       if (latestCharge !== null) setDeliveryCharge(latestCharge);
+      if (latestSettings) setFirstOrderOffer(latestSettings.firstOrderOffer);
       const selectedBranch = BRANCHES[branch];
       const address = [trimmed.house, trimmed.area, trimmed.landmark ? `Near ${trimmed.landmark}` : "", "Goregaon East, Mumbai"]
         .filter(Boolean)
         .join(", ");
-      const message = `*New medicine request | Goregaonmeds*\n\n*Customer*\nName: ${trimmed.name}\nPhone: ${trimmed.phone}\nAddress: ${address}\n\n*Preferred branch*\n${selectedBranch.name}${selectedBranch.open24x7 ? " (open 24×7)" : ""}\n\n*Medicines / prescription*\n${imageUrl || medicines.trim()}\n\n*Delivery*\n${deliveryMessageLine(latestCharge)}\n\n*Payment preference*\n${payment === "upi" ? "UPI at delivery" : "Cash on delivery"}\n\nPlease confirm availability, total price and delivery details.`;
+      const message = `*New medicine request | Goregaonmeds*\n\n*Customer*\nName: ${trimmed.name}\nPhone: ${trimmed.phone}\nAddress: ${address}\n\n*Preferred branch*\n${selectedBranch.name}${selectedBranch.open24x7 ? " (open 24×7)" : ""}\n\n*Medicines / prescription*\n${imageUrl || medicines.trim()}\n\n*Delivery*\n${deliveryMessageLine(latestCharge)}${offerMessageSection(latestOffer)}\n\n*Payment preference*\n${payment === "upi" ? "UPI at delivery" : "Cash on delivery"}\n\nPlease confirm availability, total price and delivery details.`;
       const url = `https://wa.me/${PHONE}?text=${encodeURIComponent(message)}`;
 
       await profileTask; // Navigating away would cancel the in-flight save.
@@ -551,6 +566,16 @@ export default function PharmacyLanding() {
       : deliveryCharge === 0
         ? "Medicine total · no delivery charge"
         : `Medicine total + ${formatRupees(deliveryCharge)}`;
+
+  const faq = firstOrderOffer
+    ? [
+        ...FAQ,
+        [
+          "What is the First Order Offer?",
+          `Your first order with a medicine total of ${formatRupees(firstOrderOffer.minSubtotal)} or more (delivery not included) gets a ${firstOrderOffer.giftName} free, at any of our 3 branches. It is one per mobile number and is added by the pharmacy once your total is confirmed. The gift is added at ₹0 and doesn't change the price of your medicines.`,
+        ],
+      ]
+    : FAQ;
 
   return (
     <LazyMotion features={loadMotionFeatures}>
@@ -580,6 +605,7 @@ export default function PharmacyLanding() {
               <a className="hover:text-[#567832]" href="#branches">Our branches</a>
               <a className="hover:text-[#567832]" href="#about">About us</a>
             </nav>
+            
             <a
               className={`${BTN} ${BTN_DARK} min-h-11 px-[19px] py-3 text-xs max-sm:hidden max-md:ml-auto`}
               href="#order"
@@ -700,6 +726,14 @@ export default function PharmacyLanding() {
                   </span>
                 )}
                 {deliveryCharge !== null && <DeliveryBadge charge={deliveryCharge} />}
+                {firstOrderOffer && (
+                  <a
+                    href="#order"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#cfe0b8] bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-gm-ink md:text-[11px]"
+                  >
+                    <Gift size={13} /> FREE {firstOrderOffer.giftName} on your first {formatRupees(firstOrderOffer.minSubtotal)}+ order
+                  </a>
+                )}
               </div>
             </m.div>
 
@@ -916,6 +950,23 @@ export default function PharmacyLanding() {
                     <p className="mt-1 text-[10px] text-gm-muted sm:text-[11px]">A little information. A lot less hassle.</p>
                   </div>
                 </div>
+                {firstOrderOffer && (
+                  <div className="mt-[18px] flex items-start gap-3 rounded-[14px] border border-[#cfe0b8] bg-[linear-gradient(100deg,#eef6dc,#fbfcf7_75%)] p-3.5 sm:items-center">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-gm-ink text-gm-lime">
+                      <Gift size={19} />
+                    </span>
+                    <span className="min-w-0">
+                      <strong className="block text-xs font-[650] leading-[1.45] sm:text-[13px]">
+                        {firstOrderOfferText(firstOrderOffer)}
+                      </strong>
+                      <small className="mt-0.5 block text-[10px] leading-[1.6] text-gm-muted">
+                        Added automatically to your first order on this mobile number once the pharmacy confirms a
+                        medicine total of {formatRupees(firstOrderOffer.minSubtotal)}+ (delivery not included). One per
+                        customer, across all 3 branches.
+                      </small>
+                    </span>
+                  </div>
+                )}
                 <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">
                   <legend className="sr-only">Medicine request details</legend>
                   <div className={FORM_BLOCK}>
@@ -1148,8 +1199,7 @@ export default function PharmacyLanding() {
                               userEdited.current = true;
                               setCustomer((prev) => ({
                                 ...prev,
-                                [field.key]:
-                                  field.key === "phone" ? e.target.value.replace(/\D/g, "").slice(0, 10) : e.target.value,
+                                [field.key]: field.key === "phone" ? toMobileInput(e.target.value) : e.target.value,
                               }));
                               invalidate();
                             }}
@@ -1222,6 +1272,19 @@ export default function PharmacyLanding() {
                     <span className="text-gm-muted">Delivery</span>
                     <DeliveryBadge charge={deliveryCharge} />
                   </div>
+                  {firstOrderOffer && (
+                    <div className="mt-2.5 flex items-start justify-between gap-3 text-[11px]">
+                      <span className="flex items-center gap-1.5 text-gm-muted">
+                        <Gift size={13} /> First order gift
+                      </span>
+                      <span className="text-right font-semibold text-[#3d632b]">
+                        {freeGiftLabel(firstOrderOffer.giftName)}
+                        <small className="block text-[10px] font-normal text-gm-muted">
+                          If eligible · medicines {formatRupees(firstOrderOffer.minSubtotal)}+
+                        </small>
+                      </span>
+                    </div>
+                  )}
                   <div className="mt-3 flex items-center justify-between gap-3 border-t border-dashed border-[#d5dfcb] pt-3 text-xs font-[650]">
                     <span>Estimated total</span>
                     <span className="text-right">{estimatedTotal}</span>
@@ -1271,8 +1334,14 @@ export default function PharmacyLanding() {
                       <p className="mb-3 mt-2 text-xs">
                         Tap Send in WhatsApp to submit your request. Your order is confirmed only after our team replies.
                       </p>
-                      <div className="mb-4">
+                      <div className="mb-4 flex flex-col gap-2">
                         <DeliveryBadge charge={deliveryCharge} />
+                        {firstOrderOffer && (
+                          <span className="inline-flex items-start gap-1.5 text-[11px] text-[#3d632b]">
+                            <Gift size={13} className="mt-0.5" /> First Order Offer noted in your message. If eligible,
+                            the pharmacy adds your {freeGiftLabel(firstOrderOffer.giftName)}.
+                          </span>
+                        )}
                       </div>
                       <a href={readyUrl} className={`${BTN} ${BTN_DARK} min-h-10 px-4 py-3 text-[11px]`}>
                         Open WhatsApp again <ArrowUpRight size={18} />
@@ -1459,7 +1528,7 @@ export default function PharmacyLanding() {
               </a>
             </m.div>
             <m.div initial="hidden" whileInView="visible" viewport={IN_VIEW} variants={staggerContainer}>
-              {FAQ.map(([question, answer]) => (
+              {faq.map(([question, answer]) => (
                 <m.details variants={fadeInUp} key={question} className="group border-b border-[#dce2d6]">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-[22px] text-xs font-semibold sm:py-[23px] sm:text-[13px]">
                     {question}

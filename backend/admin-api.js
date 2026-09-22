@@ -6,12 +6,14 @@ const multer = require('multer');
 const { rateLimit } = require('express-rate-limit');
 const { randomBytes, createHash, timingSafeEqual, randomUUID } = require('node:crypto');
 const { AdminSession, Bill, isDatabaseError, getDeliveryCharge, getStoreSettings, setDeliveryCharge } = require('./db');
-const { parseBill, priceBill, parseDeliveryCharge, escapeRegex } = require('./validation');
+const { parseBill, priceBill, parseDeliveryCharge, normalizeIndianMobile, escapeRegex } = require('./validation');
+const { firstOrderOfferPublic, firstOrderStatus, resolveFreeGift, releaseClaim, markBillDeleted } = require('./offers');
 
 const BRANCH_NAMES = ['Apple Pharmacy', 'Lotus Pharmacy', 'Healthzone & Cosmetic'];
 const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const CURSOR = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)_([a-f0-9]{24})$/;
+const EXISTING_FIELDS = 'fulfilment shipping phone freeGift';
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
@@ -20,6 +22,9 @@ function toClientBill(doc) {
     id: doc.billId, reference: doc.reference, createdAt: doc.billedAt.toISOString(), branch: doc.branch,
     customer: doc.customer, phone: doc.phone, method: doc.method,
     fulfilment: doc.fulfilment ?? 'pickup', shipping: doc.shipping ?? 0, items: doc.items,
+    freeGift: doc.freeGift
+      ? { offerId: doc.freeGift.offerId, name: doc.freeGift.name, qty: doc.freeGift.qty ?? 1, price: 0, redeemedAt: new Date(doc.freeGift.redeemedAt).toISOString() }
+      : null,
     discount: doc.discount, received: doc.received, note: doc.note, savedAt: doc.savedAt.toISOString(),
   };
 }
@@ -55,6 +60,20 @@ async function priceForSave(body, bill, existing) {
 
 function sendPricingError(res, priced) {
   return res.status(priced.status).json({ error: priced.error, ...(priced.shipping !== undefined && { shipping: priced.shipping }) });
+}
+
+/** Writes the bill with its server-decided gift; releases a fresh offer claim if the write fails. */
+async function writeBill(value, gift, upsert) {
+  try {
+    return await Bill.findOneAndUpdate(
+      { billId: value.billId },
+      { $set: { ...value, freeGift: gift.freeGift, savedAt: new Date() } },
+      { upsert, returnDocument: 'after', runValidators: true, lean: true },
+    );
+  } catch (error) {
+    if (gift.claimed) await releaseClaim(value);
+    throw error;
+  }
 }
 
 module.exports = function installAdminApi(app, cloudinary) {
@@ -98,28 +117,40 @@ module.exports = function installAdminApi(app, cloudinary) {
   const billLimit = rateLimit({windowMs:15*60*1000,limit:300,standardHeaders:'draft-7',legacyHeaders:false,message:{error:'Too many billing requests. Please wait a few minutes.'}});
 
   // Store settings (delivery charge)
-  router.get('/settings', billLimit, asyncRoute(async (_req, res) => res.json(await getStoreSettings())));
+  router.get('/settings', billLimit, asyncRoute(async (_req, res) => res.json({ ...(await getStoreSettings()), firstOrderOffer: firstOrderOfferPublic() })));
 
   router.put('/settings', billLimit, asyncRoute(async (req, res) => {
     const parsed = parseDeliveryCharge(req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
-    return res.json(await setDeliveryCharge(parsed.value));
+    return res.json({ ...(await setDeliveryCharge(parsed.value)), firstOrderOffer: firstOrderOfferPublic() });
+  }));
+
+  // First Order Offer eligibility preview. Admin-only so phone numbers cannot be probed publicly.
+  router.get('/offers/first-order', billLimit, asyncRoute(async (req, res) => {
+    const phone = normalizeIndianMobile(typeof req.query.phone === 'string' ? req.query.phone : '');
+    if (!phone) return res.status(400).json({ error: 'Enter a valid 10-digit mobile number.' });
+    const billId = typeof req.query.billId === 'string' ? req.query.billId.slice(0, 64) : '';
+    const { status, redemption } = await firstOrderStatus(phone, billId);
+    return res.json({
+      phone,
+      status,
+      redeemedAt: redemption ? new Date(redemption.redeemedAt).toISOString() : null,
+      reference: status === 'already_redeemed' ? redemption.reference || null : null,
+      firstOrderOffer: firstOrderOfferPublic(),
+    });
   }));
 
   // Create Bill
   router.post('/bills', billLimit, asyncRoute(async (req,res)=>{
     const parsed = parseBill(req.body);
     if(parsed.error) return res.status(400).json({error:parsed.error});
-    const existing = await Bill.findOne({ billId: parsed.value.billId }).select('fulfilment shipping').lean();
+    const existing = await Bill.findOne({ billId: parsed.value.billId }).select(EXISTING_FIELDS).lean();
     const priced = await priceForSave(req.body, parsed.value, existing);
     if(priced.error) return sendPricingError(res, priced);
-    const savedAt = new Date();
-    const doc = await Bill.findOneAndUpdate(
-      { billId: priced.value.billId },
-      { $set: { ...priced.value, savedAt } },
-      { upsert: true, returnDocument: 'after', runValidators: true, lean: true },
-    );
-    return res.status(existing ? 200 : 201).json({ bill: toClientBill(doc), created: !existing });
+    const gift = await resolveFreeGift(priced.value, existing);
+    if(gift.error) return res.status(gift.status).json({ error: gift.error });
+    const doc = await writeBill(priced.value, gift, true);
+    return res.status(existing ? 200 : 201).json({ bill: toClientBill(doc), created: !existing, giftAdded: !!gift.claimed });
   }));
 
   // Read Bills (Pagination)
@@ -163,20 +194,19 @@ module.exports = function installAdminApi(app, cloudinary) {
       return res.status(400).json({ error: 'Bill ID mismatch in request.' });
     }
 
-    const existing = await Bill.findOne({ billId: req.params.billId }).select('fulfilment shipping').lean();
+    const existing = await Bill.findOne({ billId: req.params.billId }).select(EXISTING_FIELDS).lean();
     if (!existing) return res.status(404).json({ error: 'Bill not found or already deleted.' });
     const priced = await priceForSave(req.body, parsed.value, existing);
     if (priced.error) return sendPricingError(res, priced);
+    const gift = await resolveFreeGift(priced.value, existing);
+    if (gift.error) return res.status(gift.status).json({ error: gift.error });
 
-    const savedAt = new Date();
-    const doc = await Bill.findOneAndUpdate(
-      { billId: req.params.billId },
-      { $set: { ...priced.value, savedAt } },
-      { returnDocument: 'after', runValidators: true, lean: true }
-    );
-
-    if (!doc) return res.status(404).json({ error: 'Bill not found or already deleted.' });
-    return res.json({ bill: toClientBill(doc), updated: true });
+    const doc = await writeBill(priced.value, gift, false);
+    if (!doc) {
+      if (gift.claimed) await releaseClaim(priced.value);
+      return res.status(404).json({ error: 'Bill not found or already deleted.' });
+    }
+    return res.json({ bill: toClientBill(doc), updated: true, giftAdded: !!gift.claimed });
   }));
 
   // Delete Bill
@@ -185,6 +215,8 @@ module.exports = function installAdminApi(app, cloudinary) {
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: 'Bill not found.' });
     }
+    // The offer redemption stays: that number has used its First Order Offer.
+    await markBillDeleted(req.params.billId);
     return res.json({ success: true, message: 'Bill deleted successfully.' });
   }));
 

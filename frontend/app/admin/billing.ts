@@ -1,11 +1,14 @@
-//frontend/app/admin/billing.ts
 export type Item = { id: string; name: string; batch: string; expiry: string; qty: string; rate: string };
 export type Fulfilment = 'pickup' | 'delivery';
+// Attached by the server only; never counted in totals and ignored if sent back.
+export type FreeGift = { offerId: string; name: string; qty: number; price: number; redeemedAt: string };
+export type OfferStatus = 'available' | 'returning_customer' | 'already_redeemed' | 'redeemed_here' | 'no_phone' | 'inactive';
 export type Bill = {
   id: string; reference: string; createdAt: string; branch: number;
   customer: string; phone: string; method: 'UPI' | 'Cash' | 'Card';
   // shipping is in paise and resolved by the server; the client value is display-only.
   fulfilment: Fulfilment; shipping: number;
+  freeGift: FreeGift | null;
   items: Item[]; discount: string; received: string; note: string;
 };
 export const BRANCHES = [
@@ -24,7 +27,7 @@ export const validMoney = (value: string) => /^\d{1,7}(\.\d{0,2})?$/.test(value)
 export const newItem = (): Item => ({ id: crypto.randomUUID(), name: '', batch: '', expiry: '', qty: '1', rate: '' });
 export function newBill(): Bill {
   const id = crypto.randomUUID();
-  return { id, reference: `GM-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${id.slice(0,8).toUpperCase()}`, createdAt: new Date().toISOString(), branch: 0, customer: '', phone: '', method: 'UPI', fulfilment: 'pickup', shipping: 0, items: [newItem()], discount: '0', received: '0', note: '' };
+  return { id, reference: `GM-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${id.slice(0,8).toUpperCase()}`, createdAt: new Date().toISOString(), branch: 0, customer: '', phone: '', method: 'UPI', fulfilment: 'pickup', shipping: 0, freeGift: null, items: [newItem()], discount: '0', received: '0', note: '' };
 }
 export function totals(b: Bill) {
   const gross = b.items.reduce((sum, i) => sum + paise(i.rate) * (Number(i.qty) || 0), 0);
@@ -32,7 +35,8 @@ export function totals(b: Bill) {
   const shipping = b.fulfilment === 'delivery' && Number.isInteger(b.shipping) && b.shipping > 0 ? b.shipping : 0;
   const total = gross - discount + shipping;
   const received = paise(b.received);
-  return { gross, discount, shipping, total, received, due: Math.max(0, total - received), units: b.items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0) };
+  // merchandise = medicines after discount, before delivery (the First Order Offer threshold basis).
+  return { gross, discount, merchandise: gross - discount, shipping, total, received, due: Math.max(0, total - received), units: b.items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0) };
 }
 export function validate(b: Bill, requirePhone = false): string {
   if (!b.reference.trim()) return 'Enter a bill reference.';
