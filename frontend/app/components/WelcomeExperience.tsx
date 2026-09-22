@@ -7,7 +7,7 @@ import './welcome-experience.css';
 
 // Presentation metadata supplied by the pharmacy. Prices elsewhere stay server-owned.
 export const GLUCOONE_MRP_PAISE = 65000;
-const PRODUCT_IMAGE = '/glucoone-bg03.webp';
+const PRODUCT_IMAGE = '/glucoone-bg03.png';
 export const isGlucoOne = (name: string) => /gluco\s*one|bg[\s-]*03/i.test(name);
 
 function readFlag(key: string, session = false) {
