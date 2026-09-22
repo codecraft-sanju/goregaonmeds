@@ -1,3 +1,4 @@
+//frontend/app/customerProfile.ts
 export type SavedProfile = {
   name: string;
   phone: string;

@@ -1,3 +1,4 @@
+//backend/admin-api.js
 'use strict';
 // Mount BEFORE the existing /api/admin/login route, or remove that old route.
 // This module owns /api/admin/*, including an authenticated receipt upload.

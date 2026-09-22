@@ -1,3 +1,4 @@
+//frontend/app/admin/billing.ts
 export type Item = { id: string; name: string; batch: string; expiry: string; qty: string; rate: string };
 export type Bill = {
   id: string; reference: string; createdAt: string; branch: number;

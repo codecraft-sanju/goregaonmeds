@@ -1,3 +1,4 @@
+//frontend/app/admin/page.tsx
 import AdminPanel from './AdminPanel';
 import type { Metadata } from 'next';
 export const metadata: Metadata = {

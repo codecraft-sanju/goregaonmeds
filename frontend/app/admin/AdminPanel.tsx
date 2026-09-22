@@ -1,3 +1,4 @@
+//frontend/app/admin/AdminPanel.tsx
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';

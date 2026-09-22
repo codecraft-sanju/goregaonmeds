@@ -1,3 +1,4 @@
+//backend/validation.js
 'use strict';
 // Server-side mirror of the frontend rules in billing.ts. Keep the two in sync.
 

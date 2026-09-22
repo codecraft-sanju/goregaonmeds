@@ -1,3 +1,4 @@
+//backend/db.js
 'use strict';
 const mongoose = require('mongoose');
 
