@@ -1,3 +1,4 @@
+//frontend/app/admin/billing.ts
 export type Item = { id: string; name: string; batch: string; expiry: string; qty: string; rate: string };
 export type Fulfilment = 'pickup' | 'delivery';
 // Attached by the server only; never counted in totals and ignored if sent back.

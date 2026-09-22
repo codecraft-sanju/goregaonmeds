@@ -1,3 +1,4 @@
+/* frontend/app/admin/admin-delivery.css */
 /* Delivery charge, order type and 24×7 styling for the admin panel. Loaded after admin.css. */
 .ga-fulfilment-row{margin:0 0 19px}
 .ga-delivery-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:650;color:var(--forest);background:#f3f6ed;border:1px solid #e4eadc;border-radius:999px;padding:6px 11px;white-space:nowrap}

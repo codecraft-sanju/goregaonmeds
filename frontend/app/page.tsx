@@ -1,3 +1,4 @@
+// app/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -31,6 +32,12 @@ import Image from "next/image";
 import { fetchSavedProfile, forgetProfile, saveProfile } from "./customerProfile";
 import { fetchStoreSettings, firstOrderOfferText, formatRupees, freeGiftLabel, type FirstOrderOffer } from "./storeSettings";
 import { toMobileInput } from "./phone";
+import {
+  CustomerWelcome,
+  OfferProduct,
+  GLUCOONE_MRP_PAISE,
+  isGlucoOne,
+} from './components/WelcomeExperience';
 
 // Decorative / below-the-fold widgets are split into their own chunks.
 const StrokeText = dynamic(() => import("./StrokeText"), { ssr: false });
@@ -202,8 +209,11 @@ function deliveryMessageLine(charge: number | null): string {
 }
 
 function offerMessageSection(offer: FirstOrderOffer | null): string {
-  if (!offer) return "";
-  return `\n\n*First Order Offer 🎁*\nIf this is my first order and the medicine total is ${formatRupees(offer.minSubtotal)}+ (before delivery), please add: ${freeGiftLabel(offer.giftName)}`;
+  if (!offer) return '';
+  const value = isGlucoOne(offer.giftName)
+    ? ` (MRP ${formatRupees(GLUCOONE_MRP_PAISE)}; gift price ₹0 if eligible)`
+    : '';
+  return `\n\n*First Order Offer 🎁*\nIf this is my first order and my medicine total after discount is ${formatRupees(offer.minSubtotal)}+ (excluding delivery), please check eligibility and add: ${freeGiftLabel(offer.giftName)}${value}. Once per mobile number across all 3 branches.`;
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -572,7 +582,7 @@ export default function PharmacyLanding() {
         ...FAQ,
         [
           "What is the First Order Offer?",
-          `Your first order with a medicine total of ${formatRupees(firstOrderOffer.minSubtotal)} or more (delivery not included) gets a ${firstOrderOffer.giftName} free, at any of our 3 branches. It is one per mobile number and is added by the pharmacy once your total is confirmed. The gift is added at ₹0 and doesn't change the price of your medicines.`,
+          `Your first order with a medicine total of ${formatRupees(firstOrderOffer.minSubtotal)} or more after discount, excluding delivery, may qualify for a free ${firstOrderOffer.giftName}.${isGlucoOne(firstOrderOffer.giftName) ? ` Its MRP is ${formatRupees(GLUCOONE_MRP_PAISE)}; eligible customers pay ₹0 for the gift.` : ''} This offer is available once per mobile number across Apple, Lotus and Healthzone. The pharmacy confirms eligibility when saving your bill. Clicking Claim starts a medicine request; it does not reserve or redeem the gift.`,
         ],
       ]
     : FAQ;
@@ -644,7 +654,10 @@ export default function PharmacyLanding() {
             </m.nav>
           )}
         </header>
-
+        <CustomerWelcome
+          offer={firstOrderOffer}
+          deliveryCharge={deliveryCharge}
+        />
         <main>
           <section
             className={`${CONTAINER} relative grid grid-cols-1 items-center gap-8 pb-8 pt-[38px] sm:grid-cols-2 sm:gap-5 sm:py-[45px] md:gap-7 lg:grid-cols-[1.05fr_1fr] lg:gap-[60px] lg:pb-[72px] lg:pt-[65px] min-[1500px]:py-[85px]`}
@@ -731,7 +744,14 @@ export default function PharmacyLanding() {
                     href="#order"
                     className="inline-flex items-center gap-1.5 rounded-full border border-[#cfe0b8] bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-gm-ink md:text-[11px]"
                   >
-                    <Gift size={13} /> FREE {firstOrderOffer.giftName} on your first {formatRupees(firstOrderOffer.minSubtotal)}+ order
+                    <Gift size={13} className="shrink-0" />
+                    <span>
+                      FREE {firstOrderOffer.giftName}
+                      {isGlucoOne(firstOrderOffer.giftName) && (
+                        <> · MRP <s>{formatRupees(GLUCOONE_MRP_PAISE)}</s></>
+                      )}
+                      {' '}on your first {formatRupees(firstOrderOffer.minSubtotal)}+ medicine order
+                    </span>
                   </a>
                 )}
               </div>
@@ -950,23 +970,7 @@ export default function PharmacyLanding() {
                     <p className="mt-1 text-[10px] text-gm-muted sm:text-[11px]">A little information. A lot less hassle.</p>
                   </div>
                 </div>
-                {firstOrderOffer && (
-                  <div className="mt-[18px] flex items-start gap-3 rounded-[14px] border border-[#cfe0b8] bg-[linear-gradient(100deg,#eef6dc,#fbfcf7_75%)] p-3.5 sm:items-center">
-                    <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-gm-ink text-gm-lime">
-                      <Gift size={19} />
-                    </span>
-                    <span className="min-w-0">
-                      <strong className="block text-xs font-[650] leading-[1.45] sm:text-[13px]">
-                        {firstOrderOfferText(firstOrderOffer)}
-                      </strong>
-                      <small className="mt-0.5 block text-[10px] leading-[1.6] text-gm-muted">
-                        Added automatically to your first order on this mobile number once the pharmacy confirms a
-                        medicine total of {formatRupees(firstOrderOffer.minSubtotal)}+ (delivery not included). One per
-                        customer, across all 3 branches.
-                      </small>
-                    </span>
-                  </div>
-                )}
+                {firstOrderOffer && <OfferProduct offer={firstOrderOffer} />}
                 <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">
                   <legend className="sr-only">Medicine request details</legend>
                   <div className={FORM_BLOCK}>
@@ -1279,6 +1283,11 @@ export default function PharmacyLanding() {
                       </span>
                       <span className="text-right font-semibold text-[#3d632b]">
                         {freeGiftLabel(firstOrderOffer.giftName)}
+                        {isGlucoOne(firstOrderOffer.giftName) && (
+                          <small className="block text-[10px] font-normal text-gm-muted">
+                            MRP <s>{formatRupees(GLUCOONE_MRP_PAISE)}</s> · Gift price ₹0 if eligible
+                          </small>
+                        )}
                         <small className="block text-[10px] font-normal text-gm-muted">
                           If eligible · medicines {formatRupees(firstOrderOffer.minSubtotal)}+
                         </small>

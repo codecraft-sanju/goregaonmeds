@@ -1,3 +1,4 @@
+/* frontend/app/admin-offer.css */
 /* First Order Offer styling for the admin panel. Loaded after admin.css. */
 .ga-offer{display:flex;align-items:center;gap:13px;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:#fff;margin-bottom:22px}
 .ga-offer-icon{display:grid;place-items:center;width:40px;height:40px;flex-shrink:0;border-radius:11px;background:#f1f5ea;color:var(--forest)}
