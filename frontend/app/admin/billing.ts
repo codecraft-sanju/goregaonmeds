@@ -1,15 +1,19 @@
 //frontend/app/admin/billing.ts
 export type Item = { id: string; name: string; batch: string; expiry: string; qty: string; rate: string };
+export type Fulfilment = 'pickup' | 'delivery';
 export type Bill = {
   id: string; reference: string; createdAt: string; branch: number;
   customer: string; phone: string; method: 'UPI' | 'Cash' | 'Card';
+  // shipping is in paise and resolved by the server; the client value is display-only.
+  fulfilment: Fulfilment; shipping: number;
   items: Item[]; discount: string; received: string; note: string;
 };
 export const BRANCHES = [
-  { name: 'Apple Pharmacy', area: 'Aarey Road', address: 'Shop No. 9, Sheetal Krupa Building, Ground Floor, Aarey Road, Goregaon East, Mumbai', phone: '+91 84338 18771', gstin: '', licence: '' },
-  { name: 'Lotus Pharmacy', area: 'Jay Prakash Nagar', address: 'Shop No. 10, Shreyas Bhavan, Jay Prakash Nagar Road No. 1, opposite Domino’s Pizza, Goregaon East, Mumbai', phone: '+91 84338 18771', gstin: '', licence: '' },
-  { name: 'Healthzone & Cosmetic', area: 'Aarey Road', address: 'Pednekar Chawl, Shop No. 3, Ground Floor, S.V., Aarey Road, Goregaon East, Mumbai', phone: '+91 84338 18771', gstin: '', licence: '' },
+  { name: 'Apple Pharmacy', area: 'Aarey Road', address: 'Shop No. 9, Sheetal Krupa Building, Ground Floor, Aarey Road, Goregaon East, Mumbai', phone: '+91 84338 18771', gstin: '', licence: '', open24x7: false },
+  { name: 'Lotus Pharmacy', area: 'Jay Prakash Nagar', address: 'Shop No. 10, Shreyas Bhavan, Jay Prakash Nagar Road No. 1, opposite Domino’s Pizza, Goregaon East, Mumbai', phone: '+91 84338 18771', gstin: '', licence: '', open24x7: false },
+  { name: 'Healthzone & Cosmetic', area: 'Aarey Road', address: 'Pednekar Chawl, Shop No. 3, Ground Floor, S.V., Aarey Road, Goregaon East, Mumbai', phone: '+91 84338 18771', gstin: '', licence: '', open24x7: true },
 ];
+export const MAX_DELIVERY_PAISE = 1_000_000; // Must match the backend validation.js limit.
 export const money = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(paise / 100);
 export function paise(value: string): number {
   if (!/^\d{1,7}(\.\d{0,2})?$/.test(value)) return 0;
@@ -20,14 +24,15 @@ export const validMoney = (value: string) => /^\d{1,7}(\.\d{0,2})?$/.test(value)
 export const newItem = (): Item => ({ id: crypto.randomUUID(), name: '', batch: '', expiry: '', qty: '1', rate: '' });
 export function newBill(): Bill {
   const id = crypto.randomUUID();
-  return { id, reference: `GM-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${id.slice(0,8).toUpperCase()}`, createdAt: new Date().toISOString(), branch: 0, customer: '', phone: '', method: 'UPI', items: [newItem()], discount: '0', received: '0', note: '' };
+  return { id, reference: `GM-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${id.slice(0,8).toUpperCase()}`, createdAt: new Date().toISOString(), branch: 0, customer: '', phone: '', method: 'UPI', fulfilment: 'pickup', shipping: 0, items: [newItem()], discount: '0', received: '0', note: '' };
 }
 export function totals(b: Bill) {
   const gross = b.items.reduce((sum, i) => sum + paise(i.rate) * (Number(i.qty) || 0), 0);
   const discount = Math.min(paise(b.discount), gross);
-  const total = gross - discount;
+  const shipping = b.fulfilment === 'delivery' && Number.isInteger(b.shipping) && b.shipping > 0 ? b.shipping : 0;
+  const total = gross - discount + shipping;
   const received = paise(b.received);
-  return { gross, discount, total, received, due: Math.max(0, total - received), units: b.items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0) };
+  return { gross, discount, shipping, total, received, due: Math.max(0, total - received), units: b.items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0) };
 }
 export function validate(b: Bill, requirePhone = false): string {
   if (!b.reference.trim()) return 'Enter a bill reference.';

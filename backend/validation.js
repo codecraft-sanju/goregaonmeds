@@ -1,8 +1,9 @@
-//backend/validation.js
 'use strict';
 // Server-side mirror of the frontend rules in billing.ts. Keep the two in sync.
 
 const BRANCH_COUNT = 3;
+const MAX_DELIVERY_PAISE = 1_000_000; // ₹10,000 ceiling catches a mistyped charge.
+const FULFILMENT = ['pickup', 'delivery'];
 const MONEY = /^\d{1,7}(\.\d{0,2})?$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MOBILE = /^[6-9]\d{9}$/;
@@ -24,12 +25,12 @@ function paise(value) {
   return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
 }
 
-function totals(bill) {
+function totals(bill, shipping = 0) {
   const gross = bill.items.reduce((sum, item) => sum + paise(item.rate) * Number(item.qty), 0);
   const discount = Math.min(paise(bill.discount), gross);
-  const total = gross - discount;
+  const total = gross - discount + shipping;
   const received = paise(bill.received);
-  return { gross, discount, total, received, due: Math.max(0, total - received) };
+  return { gross, discount, shipping, total, received, due: Math.max(0, total - received) };
 }
 
 /** Returns { value } with a normalised bill, or { error } with a user-facing message. */
@@ -60,6 +61,10 @@ function parseBill(input) {
   }
   if (!['UPI', 'Cash', 'Card'].includes(input.method)) return { error: 'Choose a valid payment method.' };
 
+  // Bills saved before home delivery existed have no fulfilment field; treat them as pickup.
+  const fulfilment = input.fulfilment ?? 'pickup';
+  if (!FULFILMENT.includes(fulfilment)) return { error: 'Choose counter pickup or home delivery.' };
+
   if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) {
     return { error: 'Add between 1 and 50 medicines.' };
   }
@@ -67,9 +72,10 @@ function parseBill(input) {
   const items = [];
   for (const [index, raw] of input.items.entries()) {
     const row = index + 1;
+    if (!isPlainObject(raw)) return { error: `Row ${row} is invalid.` };
     // Yahan bhi double check laga diya hai
     const itemId = typeof (raw.id || raw.itemId) === 'string' ? (raw.id || raw.itemId).trim() : '';
-    if (!isPlainObject(raw) || !itemId || !UUID.test(itemId)) return { error: `Row ${row} is invalid.` };
+    if (!itemId || !UUID.test(itemId)) return { error: `Row ${row} is invalid.` };
     
     const name = text(raw.name, 160);
     if (!name) return { error: `Enter the medicine name in row ${row}.` };
@@ -94,14 +100,29 @@ function parseBill(input) {
 
   const bill = {
     billId: incomingId, reference, billedAt, branch: input.branch, customer, phone: input.phone,
-    method: input.method, items, discount: input.discount, received: input.received, note,
+    method: input.method, fulfilment, items, discount: input.discount, received: input.received, note,
   };
   
-  const computed = totals(bill);
-  if (paise(bill.discount) > computed.gross) return { error: 'Discount cannot exceed the subtotal.' };
-  if (computed.received > computed.total) return { error: 'Amount received cannot exceed the bill total.' };
+  if (paise(bill.discount) > totals(bill).gross) return { error: 'Discount cannot exceed the subtotal.' };
 
-  return { value: { ...bill, totals: computed } };
+  return { value: bill };
+}
+
+/** Attaches the server-resolved delivery charge (paise) and totals to a parsed bill, or returns { error }. */
+function priceBill(bill, shipping) {
+  if (!Number.isInteger(shipping) || shipping < 0) return { error: 'The delivery charge is invalid.' };
+  const computed = totals(bill, shipping);
+  if (computed.received > computed.total) return { error: 'Amount received cannot exceed the bill total.' };
+  return { value: { ...bill, shipping, totals: computed } };
+}
+
+/** Returns { value } with the delivery charge in paise, or { error }. */
+function parseDeliveryCharge(input) {
+  const value = isPlainObject(input) ? input.deliveryCharge : undefined;
+  if (typeof value !== 'string' || !MONEY.test(value)) return { error: 'Enter a delivery charge such as 0, 20 or 40.' };
+  const amount = paise(value);
+  if (amount > MAX_DELIVERY_PAISE) return { error: 'Delivery charge cannot exceed ₹10,000.' };
+  return { value: amount };
 }
 
 /** Returns { value } with a normalised checkout profile, or { error }. */
@@ -120,4 +141,4 @@ function parseProfile(input) {
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-module.exports = { BRANCH_COUNT, parseBill, parseProfile, escapeRegex, text };
+module.exports = { BRANCH_COUNT, MAX_DELIVERY_PAISE, parseBill, priceBill, parseDeliveryCharge, parseProfile, escapeRegex, text };

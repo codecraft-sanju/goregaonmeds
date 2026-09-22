@@ -1,4 +1,3 @@
-//backend/admin-api.js
 'use strict';
 // Mount BEFORE the existing /api/admin/login route, or remove that old route.
 // This module owns /api/admin/*, including an authenticated receipt upload.
@@ -6,8 +5,8 @@ const express = require('express');
 const multer = require('multer');
 const { rateLimit } = require('express-rate-limit');
 const { randomBytes, createHash, timingSafeEqual, randomUUID } = require('node:crypto');
-const { AdminSession, Bill, isDatabaseError } = require('./db');
-const { parseBill, escapeRegex } = require('./validation');
+const { AdminSession, Bill, isDatabaseError, getDeliveryCharge, getStoreSettings, setDeliveryCharge } = require('./db');
+const { parseBill, priceBill, parseDeliveryCharge, escapeRegex } = require('./validation');
 
 const BRANCH_NAMES = ['Apple Pharmacy', 'Lotus Pharmacy', 'Healthzone & Cosmetic'];
 const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
@@ -19,7 +18,8 @@ const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req,
 function toClientBill(doc) {
   return {
     id: doc.billId, reference: doc.reference, createdAt: doc.billedAt.toISOString(), branch: doc.branch,
-    customer: doc.customer, phone: doc.phone, method: doc.method, items: doc.items,
+    customer: doc.customer, phone: doc.phone, method: doc.method,
+    fulfilment: doc.fulfilment ?? 'pickup', shipping: doc.shipping ?? 0, items: doc.items,
     discount: doc.discount, received: doc.received, note: doc.note, savedAt: doc.savedAt.toISOString(),
   };
 }
@@ -30,6 +30,31 @@ function historyFilter(query) {
   const pattern = new RegExp(escapeRegex(q), 'i');
   const branches = BRANCH_NAMES.flatMap((name, index) => (name.toLowerCase().includes(q.toLowerCase()) ? [index] : []));
   return { $or: [{ reference: pattern }, { customer: pattern }, { phone: pattern }, ...(branches.length ? [{ branch: { $in: branches } }] : [])] };
+}
+
+const describeCharge = (paise) => (paise === 0 ? 'FREE' : `₹${(paise / 100).toFixed(2)}`);
+
+/**
+ * Resolves the delivery charge on the server: pickup is free, an existing delivery bill keeps its
+ * snapshot, and a new delivery bill takes the current store setting. The client's value is only compared.
+ */
+async function priceForSave(body, bill, existing) {
+  const shipping = bill.fulfilment !== 'delivery' ? 0
+    : existing?.fulfilment === 'delivery' && Number.isInteger(existing.shipping) ? existing.shipping
+    : await getDeliveryCharge();
+  if (bill.fulfilment === 'delivery' && Number.isInteger(body.shipping) && body.shipping !== shipping) {
+    return {
+      status: 409,
+      shipping,
+      error: `The delivery charge is now ${describeCharge(shipping)}. The bill has been updated. Review it and save again.`,
+    };
+  }
+  const priced = priceBill(bill, shipping);
+  return priced.error ? { status: 400, error: priced.error } : priced;
+}
+
+function sendPricingError(res, priced) {
+  return res.status(priced.status).json({ error: priced.error, ...(priced.shipping !== undefined && { shipping: priced.shipping }) });
 }
 
 module.exports = function installAdminApi(app, cloudinary) {
@@ -72,18 +97,29 @@ module.exports = function installAdminApi(app, cloudinary) {
 
   const billLimit = rateLimit({windowMs:15*60*1000,limit:300,standardHeaders:'draft-7',legacyHeaders:false,message:{error:'Too many billing requests. Please wait a few minutes.'}});
 
+  // Store settings (delivery charge)
+  router.get('/settings', billLimit, asyncRoute(async (_req, res) => res.json(await getStoreSettings())));
+
+  router.put('/settings', billLimit, asyncRoute(async (req, res) => {
+    const parsed = parseDeliveryCharge(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    return res.json(await setDeliveryCharge(parsed.value));
+  }));
+
   // Create Bill
   router.post('/bills', billLimit, asyncRoute(async (req,res)=>{
     const parsed = parseBill(req.body);
     if(parsed.error) return res.status(400).json({error:parsed.error});
+    const existing = await Bill.findOne({ billId: parsed.value.billId }).select('fulfilment shipping').lean();
+    const priced = await priceForSave(req.body, parsed.value, existing);
+    if(priced.error) return sendPricingError(res, priced);
     const savedAt = new Date();
-    const existed = await Bill.exists({ billId: parsed.value.billId });
     const doc = await Bill.findOneAndUpdate(
-      { billId: parsed.value.billId },
-      { $set: { ...parsed.value, savedAt } },
+      { billId: priced.value.billId },
+      { $set: { ...priced.value, savedAt } },
       { upsert: true, returnDocument: 'after', runValidators: true, lean: true },
     );
-    return res.status(existed ? 200 : 201).json({ bill: toClientBill(doc), created: !existed });
+    return res.status(existing ? 200 : 201).json({ bill: toClientBill(doc), created: !existing });
   }));
 
   // Read Bills (Pagination)
@@ -127,10 +163,15 @@ module.exports = function installAdminApi(app, cloudinary) {
       return res.status(400).json({ error: 'Bill ID mismatch in request.' });
     }
 
+    const existing = await Bill.findOne({ billId: req.params.billId }).select('fulfilment shipping').lean();
+    if (!existing) return res.status(404).json({ error: 'Bill not found or already deleted.' });
+    const priced = await priceForSave(req.body, parsed.value, existing);
+    if (priced.error) return sendPricingError(res, priced);
+
     const savedAt = new Date();
     const doc = await Bill.findOneAndUpdate(
       { billId: req.params.billId },
-      { $set: { ...parsed.value, savedAt } },
+      { $set: { ...priced.value, savedAt } },
       { returnDocument: 'after', runValidators: true, lean: true }
     );
 

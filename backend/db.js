@@ -1,4 +1,3 @@
-//backend/db.js
 'use strict';
 const mongoose = require('mongoose');
 
@@ -7,6 +6,7 @@ mongoose.set('strictQuery', true);
 mongoose.set('bufferCommands', false);
 
 const { Schema } = mongoose;
+const STORE_SETTINGS_KEY = 'store';
 
 const adminSessionSchema = new Schema(
   {
@@ -38,6 +38,9 @@ const billSchema = new Schema(
     customer: { type: String, default: '' },
     phone: { type: String, default: '' },
     method: { type: String, enum: ['UPI', 'Cash', 'Card'], required: true },
+    fulfilment: { type: String, enum: ['pickup', 'delivery'], default: 'pickup' },
+    // Delivery charge in paise, snapshotted when the bill first became a delivery bill.
+    shipping: { type: Number, default: 0, min: 0 },
     items: { type: [billItemSchema], required: true },
     discount: { type: String, required: true },
     received: { type: String, required: true },
@@ -46,6 +49,7 @@ const billSchema = new Schema(
     totals: {
       gross: { type: Number, required: true },
       discount: { type: Number, required: true },
+      shipping: { type: Number, default: 0 },
       total: { type: Number, required: true },
       received: { type: Number, required: true },
       due: { type: Number, required: true },
@@ -72,9 +76,40 @@ const customerProfileSchema = new Schema(
   { versionKey: false },
 );
 
+const storeSettingSchema = new Schema(
+  {
+    key: { type: String, required: true, unique: true },
+    deliveryCharge: {
+      type: Number,
+      required: true,
+      min: 0,
+      validate: { validator: Number.isInteger, message: 'Delivery charge must be a whole number of paise.' },
+    },
+  },
+  { versionKey: false, timestamps: true },
+);
+
 const AdminSession = mongoose.models.AdminSession || mongoose.model('AdminSession', adminSessionSchema);
 const Bill = mongoose.models.Bill || mongoose.model('Bill', billSchema);
 const CustomerProfile = mongoose.models.CustomerProfile || mongoose.model('CustomerProfile', customerProfileSchema);
+const StoreSetting = mongoose.models.StoreSetting || mongoose.model('StoreSetting', storeSettingSchema);
+
+/** Delivery charge defaults to ₹0 until an admin saves one. */
+async function getStoreSettings() {
+  const doc = await StoreSetting.findOne({ key: STORE_SETTINGS_KEY }).select('deliveryCharge updatedAt -_id').lean();
+  return { deliveryCharge: doc?.deliveryCharge ?? 0, updatedAt: doc?.updatedAt ? doc.updatedAt.toISOString() : null };
+}
+
+const getDeliveryCharge = async () => (await getStoreSettings()).deliveryCharge;
+
+async function setDeliveryCharge(deliveryCharge) {
+  const doc = await StoreSetting.findOneAndUpdate(
+    { key: STORE_SETTINGS_KEY },
+    { $set: { deliveryCharge } },
+    { upsert: true, returnDocument: 'after', runValidators: true, lean: true },
+  );
+  return { deliveryCharge: doc.deliveryCharge, updatedAt: doc.updatedAt.toISOString() };
+}
 
 async function connectDatabase(uri) {
   if (typeof uri !== 'string' || !/^mongodb(\+srv)?:\/\//.test(uri.trim())) {
@@ -84,7 +119,7 @@ async function connectDatabase(uri) {
   mongoose.connection.on('reconnected', () => console.log('[db] MongoDB reconnected.'));
   mongoose.connection.on('error', (error) => console.error('[db] MongoDB error:', error.name));
   await mongoose.connect(uri.trim(), { serverSelectionTimeoutMS: 10000, maxPoolSize: 10 });
-  await Promise.all([AdminSession.syncIndexes(), Bill.syncIndexes(), CustomerProfile.syncIndexes()]);
+  await Promise.all([AdminSession.syncIndexes(), Bill.syncIndexes(), CustomerProfile.syncIndexes(), StoreSetting.syncIndexes()]);
   console.log('[db] Connected to MongoDB.');
 }
 
@@ -92,4 +127,8 @@ const isDatabaseReady = () => mongoose.connection.readyState === 1;
 const disconnectDatabase = () => mongoose.disconnect();
 const isDatabaseError = (error) => typeof error?.name === 'string' && /^Mongo/.test(error.name);
 
-module.exports = { AdminSession, Bill, CustomerProfile, connectDatabase, disconnectDatabase, isDatabaseReady, isDatabaseError };
+module.exports = {
+  AdminSession, Bill, CustomerProfile, StoreSetting,
+  getStoreSettings, getDeliveryCharge, setDeliveryCharge,
+  connectDatabase, disconnectDatabase, isDatabaseReady, isDatabaseError,
+};

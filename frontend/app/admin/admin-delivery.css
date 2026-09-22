@@ -1,0 +1,14 @@
+/* Delivery charge, order type and 24×7 styling for the admin panel. Loaded after admin.css. */
+.ga-fulfilment-row{margin:0 0 19px}
+.ga-delivery-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:650;color:var(--forest);background:#f3f6ed;border:1px solid #e4eadc;border-radius:999px;padding:6px 11px;white-space:nowrap}
+.ga-delivery-chip.ga-free,.ga-chip.ga-free{background:var(--lime);border-color:#c5de8c;color:var(--dark);font-weight:700;letter-spacing:.3px}
+.ga-receipt header .ga-receipt-hours{display:inline-block;margin-top:7px;font-size:7px;font-weight:700;letter-spacing:1.2px;color:var(--forest);background:#eef5e0;border:1px solid #d8e6c2;border-radius:999px;padding:2px 9px}
+.ga-export .ga-receipt header .ga-receipt-hours{font-size:9px}
+.ga-settings{max-width:640px}
+.ga-settings-form{display:grid;gap:14px}
+.ga-settings-form .ga-btn{justify-self:start}
+.ga-presets{display:flex;flex-wrap:wrap;gap:6px}
+.ga-presets button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 14px;font-size:11px;color:var(--muted)}
+.ga-presets button[aria-pressed=true]{background:var(--forest);border-color:var(--forest);color:#fff}
+.ga-settings-meta{font-size:10px;color:var(--muted);margin-top:16px!important}
+@media(max-width:760px){.ga-fulfilment-row{align-items:flex-start;flex-direction:column}.ga-settings-form .ga-btn{justify-self:stretch}}

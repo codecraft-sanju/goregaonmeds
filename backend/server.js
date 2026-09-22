@@ -1,4 +1,3 @@
-//backend/server.js
 'use strict';
 require('dotenv').config();
 const express=require('express');
@@ -8,7 +7,7 @@ const multer=require('multer');
 const {rateLimit}=require('express-rate-limit');
 const {randomUUID}=require('node:crypto');
 const {v2:cloudinary}=require('cloudinary');
-const {connectDatabase,disconnectDatabase,isDatabaseReady,isDatabaseError}=require('./db');
+const {connectDatabase,disconnectDatabase,isDatabaseReady,isDatabaseError,getDeliveryCharge}=require('./db');
 const app=express();
 const PORT=Number(process.env.PORT || 5000);
 const MAX_PRESCRIPTION_BYTES=2*1024*1024;
@@ -32,6 +31,11 @@ app.get('/api/health',(_req,res)=>{
   res.setHeader('Cache-Control','no-store');
   const database=isDatabaseReady();
   res.status(database?200:503).json({status:database?'ok':'degraded',database:database?'connected':'unavailable',message:database?'Goregaonmeds backend is running.':'Database connection is unavailable.'});
+});
+// Public, read-only. The storefront displays this; admin bills resolve the charge again on the server.
+const settingsLimiter=rateLimit({windowMs:15*60*1000,limit:150,standardHeaders:'draft-7',legacyHeaders:false,message:{error:'Too many requests. Please retry in a few minutes.'}});
+app.get('/api/settings',settingsLimiter,(_req,res,next)=>{
+  getDeliveryCharge().then(deliveryCharge=>{res.setHeader('Cache-Control','no-cache');res.json({deliveryCharge});}).catch(next);
 });
 // Frontend compresses prescriptions to ~800 KB, so 2 MB leaves headroom while capping RAM at 8 × 2 MB.
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:MAX_PRESCRIPTION_BYTES,files:1,fields:0,parts:2},fileFilter(_req,file,cb){if(!new Set(['image/jpeg','image/png','image/webp','image/heic','image/heif']).has(file.mimetype))return cb(Object.assign(new Error('Choose a JPG, PNG, WEBP, HEIC or HEIF image.'),{status:415}));cb(null,true);}});

@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   Check,
   ChevronDown,
+  Clock,
   FileText,
   Heart,
   MapPin,
@@ -28,6 +29,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { fetchSavedProfile, forgetProfile, saveProfile } from "./customerProfile";
+import { fetchDeliveryCharge, formatRupees } from "./storeSettings";
 
 // Decorative / below-the-fold widgets are split into their own chunks.
 const StrokeText = dynamic(() => import("./StrokeText"), { ssr: false });
@@ -44,7 +46,7 @@ const loadMotionFeatures = () => import("./motionFeatures").then((mod) => mod.de
 const PHONE = "918433818771";
 const API = (
   process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === "development" ? "http://localhost:5000" : "")
+  (process.env.NODE_ENV === "development" ? "http://localhost:8080" : "")
 ).replace(/\/+$/, "");
 const MAX_SELECT_BYTES = 15 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // Must match the backend multer limit.
@@ -52,26 +54,35 @@ const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // Must match the backend multer limit
 const BRANCHES = [
   {
     name: "Apple Pharmacy",
+    shortName: "Apple Pharmacy",
     area: "Aarey Road",
     address:
       "Shop No. 9, Sheetal Krupa Building, Ground Floor, Aarey Road, Goregaon East, Mumbai",
     tone: "apple",
+    open24x7: false,
   },
   {
     name: "Lotus Pharmacy",
+    shortName: "Lotus Pharmacy",
     area: "Jay Prakash Nagar",
     address:
       "Shop No. 10, Shreyas Bhavan, Jay Prakash Nagar Road No. 1, opposite Domino’s Pizza, Goregaon East, Mumbai",
     tone: "lotus",
+    open24x7: false,
   },
   {
     name: "Healthzone & Cosmetic",
+    shortName: "Healthzone",
     area: "Aarey Road",
     address:
       "Pednekar Chawl, Shop No. 3, Ground Floor, S.V., Aarey Road, Goregaon East, Mumbai",
     tone: "health",
+    open24x7: true,
   },
 ] as const;
+
+const ALWAYS_OPEN_BRANCH = BRANCHES.find((item) => item.open24x7);
+const ALWAYS_OPEN_NOTICE = ALWAYS_OPEN_BRANCH ? `${ALWAYS_OPEN_BRANCH.shortName} is open 24×7` : "";
 
 const TONE_STYLES: Record<(typeof BRANCHES)[number]["tone"], { art: string; sign: string }> = {
   apple: { art: "bg-[#e8eede]", sign: "bg-[#315242]" },
@@ -90,8 +101,16 @@ const FAQ = [
   ],
   [
     "Where do you deliver?",
-    "Our branches serve Goregaon East. Share your full address so the team can confirm coverage, delivery timing and any applicable delivery charge on WhatsApp.",
+    "Our branches serve Goregaon East. Share your full address so the team can confirm coverage and delivery timing on WhatsApp. The current delivery charge is shown in the order summary before you send your request.",
   ],
+  ...(ALWAYS_OPEN_BRANCH
+    ? [
+        [
+          "Is any branch open at night?",
+          `Yes. ${ALWAYS_OPEN_BRANCH.name} on ${ALWAYS_OPEN_BRANCH.area} is open 24×7. Choose it as your preferred branch for late-night or early-morning requests.`,
+        ],
+      ]
+    : []),
   [
     "Can I send my prescription directly on WhatsApp?",
     "Yes. Use the WhatsApp contact button and attach your prescription in the chat. If you upload here, your image is stored on Cloudinary and a shareable link is included in your message. Anyone with that link can view it.",
@@ -175,6 +194,11 @@ const staggerContainer = {
   },
 };
 
+function deliveryMessageLine(charge: number | null): string {
+  if (charge === null) return "Delivery charge to be confirmed";
+  return charge === 0 ? "FREE delivery" : `Delivery charge: ${formatRupees(charge)} (added to the medicine total)`;
+}
+
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <a
@@ -195,6 +219,33 @@ function Brand({ compact = false }: { compact?: boolean }) {
         </small>
       </span>
     </a>
+  );
+}
+
+function OpenAllHoursBadge({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gm-ink font-bold uppercase text-gm-lime ${compact ? "px-2 py-0.5 text-[8px] tracking-[0.8px]" : "px-2.5 py-1 text-[9px] tracking-[1px]"}`}
+    >
+      <span className="size-1.5 animate-pulse rounded-full bg-gm-lime" aria-hidden="true" />
+      Open 24×7
+    </span>
+  );
+}
+
+function DeliveryBadge({ charge }: { charge: number | null }) {
+  if (charge === null) return <span className="text-[11px] text-gm-muted">Confirmed on WhatsApp</span>;
+  if (charge === 0) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-gm-lime px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.8px] text-gm-ink shadow-[0_0_0_1px_#b9d67a]">
+        <Truck size={13} /> FREE Delivery
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-gm-ink">
+      <Truck size={13} /> Delivery: {formatRupees(charge)}
+    </span>
   );
 }
 
@@ -234,6 +285,8 @@ export default function PharmacyLanding() {
   const [error, setError] = useState("");
   const [readyUrl, setReadyUrl] = useState("");
   const [drag, setDrag] = useState(false);
+  // Paise, as set by the admin. Null until loaded (or if the backend is unreachable).
+  const [deliveryCharge, setDeliveryCharge] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const request = useRef<XMLHttpRequest | null>(null);
@@ -282,6 +335,23 @@ export default function PharmacyLanding() {
       })
       .catch(() => {
         // No saved details or offline: the empty form still works.
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    fetchDeliveryCharge(API, controller.signal)
+      .then((charge) => {
+        if (charge !== null) setDeliveryCharge(charge);
+      })
+      .catch(() => {
+        // Shown as "confirmed on WhatsApp"; placeOrder retries before building the message.
       })
       .finally(() => clearTimeout(timeout));
     return () => {
@@ -359,7 +429,7 @@ export default function PharmacyLanding() {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       request.current = xhr;
-      xhr.open("POST", `${API}/api/upload`);
+      xhr.open("POST", `${API}/api/admin/upload`); // FIXED TO ADMIN UPLOAD ROUTE
       xhr.timeout = 75000;
 
       xhr.upload.onprogress = (event) => {
@@ -444,13 +514,18 @@ export default function PharmacyLanding() {
       : hasSavedProfile
         ? forgetProfile(API)
         : Promise.resolve();
+    // Re-read the charge so the message reflects any change the admin made while this page was open.
+    const chargeTask = fetchDeliveryCharge(API, AbortSignal.timeout(4000)).catch(() => null);
 
     try {
       const imageUrl = mode === "prescription" ? await uploadPrescription(file!) : "";
+      const latestCharge = (await chargeTask) ?? deliveryCharge;
+      if (latestCharge !== null) setDeliveryCharge(latestCharge);
+      const selectedBranch = BRANCHES[branch];
       const address = [trimmed.house, trimmed.area, trimmed.landmark ? `Near ${trimmed.landmark}` : "", "Goregaon East, Mumbai"]
         .filter(Boolean)
         .join(", ");
-      const message = `*New medicine request | Goregaonmeds*\n\n*Customer*\nName: ${trimmed.name}\nPhone: ${trimmed.phone}\nAddress: ${address}\n\n*Preferred branch*\n${BRANCHES[branch].name}\n\n*Medicines / prescription*\n${imageUrl || medicines.trim()}\n\n*Payment preference*\n${payment === "upi" ? "UPI at delivery" : "Cash on delivery"}\n\nPlease confirm availability, total price and delivery details.`;
+      const message = `*New medicine request | Goregaonmeds*\n\n*Customer*\nName: ${trimmed.name}\nPhone: ${trimmed.phone}\nAddress: ${address}\n\n*Preferred branch*\n${selectedBranch.name}${selectedBranch.open24x7 ? " (open 24×7)" : ""}\n\n*Medicines / prescription*\n${imageUrl || medicines.trim()}\n\n*Delivery*\n${deliveryMessageLine(latestCharge)}\n\n*Payment preference*\n${payment === "upi" ? "UPI at delivery" : "Cash on delivery"}\n\nPlease confirm availability, total price and delivery details.`;
       const url = `https://wa.me/${PHONE}?text=${encodeURIComponent(message)}`;
 
       await profileTask; // Navigating away would cancel the in-flight save.
@@ -469,6 +544,13 @@ export default function PharmacyLanding() {
       setBusy(false);
     }
   }
+
+  const estimatedTotal =
+    deliveryCharge === null
+      ? "Medicine total + delivery (confirmed in chat)"
+      : deliveryCharge === 0
+        ? "Medicine total · no delivery charge"
+        : `Medicine total + ${formatRupees(deliveryCharge)}`;
 
   return (
     <LazyMotion features={loadMotionFeatures}>
@@ -610,6 +692,14 @@ export default function PharmacyLanding() {
                 </span>{" "}
                 Pay at delivery <i className="mx-1.5 size-[3px] rounded-full bg-[#98a291] sm:mx-0.5 md:mx-[7px]" /> Order
                 on WhatsApp
+              </div>
+              <div className="mt-3.5 flex flex-wrap items-center gap-2.5">
+                {ALWAYS_OPEN_NOTICE && (
+                  <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-gm-ink md:text-[11px]">
+                    <Clock size={13} /> {ALWAYS_OPEN_NOTICE}
+                  </span>
+                )}
+                {deliveryCharge !== null && <DeliveryBadge charge={deliveryCharge} />}
               </div>
             </m.div>
 
@@ -979,6 +1069,17 @@ export default function PharmacyLanding() {
                     <h4 className={BLOCK_TITLE}>
                       <span className={BLOCK_NUMBER}>02</span> Choose your preferred branch
                     </h4>
+                    {ALWAYS_OPEN_NOTICE && (
+                      <p className="mb-3.5 flex items-center gap-2.5 rounded-[11px] border border-[#cfe0b8] bg-[linear-gradient(90deg,#f2f7e9,#fbfcf8)] px-3 py-2.5 text-[11px] text-gm-ink">
+                        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-gm-ink text-gm-lime">
+                          <Clock size={14} />
+                        </span>
+                        <span>
+                          <strong className="block font-[650]">{ALWAYS_OPEN_NOTICE}</strong>
+                          <small className="text-[10px] text-gm-muted">Day or night, choose it for urgent requests.</small>
+                        </span>
+                      </p>
+                    )}
                     <div className="grid gap-2">
                       {BRANCHES.map((item, index) => (
                         <label key={item.name} className={RADIO_CARD}>
@@ -990,8 +1091,11 @@ export default function PharmacyLanding() {
                             onChange={() => chooseBranch(index)}
                           />
                           <span className={RADIO_CONTENT}>
-                            <span>
-                              <strong className="block text-[11px] font-semibold">{item.name}</strong>
+                            <span className="min-w-0">
+                              <strong className="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold">
+                                {item.name}
+                                {item.open24x7 && <OpenAllHoursBadge compact />}
+                              </strong>
                               <small className="mt-0.5 block text-[10px] text-gm-muted">{item.area}</small>
                             </span>
                             <span className={RADIO_DOT} />
@@ -1108,6 +1212,22 @@ export default function PharmacyLanding() {
                   </div>
                 </fieldset>
 
+                <div className="mb-[18px] rounded-[14px] border border-[#e1e8d9] bg-[#f8faf4] p-4" aria-live="polite">
+                  <h4 className="mb-3 text-[11px] font-[650] uppercase tracking-[1px] text-[#728268]">Order summary</h4>
+                  <div className="flex items-center justify-between gap-3 text-[11px]">
+                    <span className="text-gm-muted">Medicines</span>
+                    <span className="text-right font-semibold">Priced by the pharmacy in chat</span>
+                  </div>
+                  <div className="mt-2.5 flex items-center justify-between gap-3 text-[11px]">
+                    <span className="text-gm-muted">Delivery</span>
+                    <DeliveryBadge charge={deliveryCharge} />
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-dashed border-[#d5dfcb] pt-3 text-xs font-[650]">
+                    <span>Estimated total</span>
+                    <span className="text-right">{estimatedTotal}</span>
+                  </div>
+                </div>
+
                 {error && (
                   <m.div
                     initial={{ opacity: 0, scale: 0.95 }}
@@ -1148,9 +1268,12 @@ export default function PharmacyLanding() {
                     <Check size={22} />
                     <div>
                       <strong className="text-sm">Your message is ready.</strong>
-                      <p className="mb-4 mt-2 text-xs">
+                      <p className="mb-3 mt-2 text-xs">
                         Tap Send in WhatsApp to submit your request. Your order is confirmed only after our team replies.
                       </p>
+                      <div className="mb-4">
+                        <DeliveryBadge charge={deliveryCharge} />
+                      </div>
                       <a href={readyUrl} className={`${BTN} ${BTN_DARK} min-h-10 px-4 py-3 text-[11px]`}>
                         Open WhatsApp again <ArrowUpRight size={18} />
                       </a>
@@ -1213,7 +1336,7 @@ export default function PharmacyLanding() {
               {BRANCHES.map((item, index) => (
                 <m.article
                   variants={fadeInUp}
-                  className="overflow-hidden rounded-[18px] border border-[#e0e5da] bg-white"
+                  className={`overflow-hidden rounded-[18px] border bg-white ${item.open24x7 ? "border-[#b8cf98] shadow-[0_10px_30px_#153f340d]" : "border-[#e0e5da]"}`}
                   key={item.name}
                 >
                   <div
@@ -1244,9 +1367,12 @@ export default function PharmacyLanding() {
                     </span>
                   </div>
                   <div className="p-[23px] sm:p-[15px] md:p-5 lg:p-6">
-                    <span className={`${EYEBROW} text-[8px] tracking-[1.2px] md:text-[8px] md:tracking-[1.2px]`}>
-                      {item.area}
-                    </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className={`${EYEBROW} text-[8px] tracking-[1.2px] md:text-[8px] md:tracking-[1.2px]`}>
+                        {item.area}
+                      </span>
+                      {item.open24x7 && <OpenAllHoursBadge compact />}
+                    </div>
                     <h3 className="mt-2 text-[21px] font-[550] tracking-[-0.5px] sm:text-base lg:text-[19px]">{item.name}</h3>
                     <p className="mb-[21px] mt-3 text-xs leading-[1.85] text-gm-muted sm:mb-[18px] sm:min-h-[130px] sm:text-[10px] md:min-h-[105px] lg:min-h-[83px] lg:text-[11px]">
                       {item.address}
@@ -1396,6 +1522,11 @@ export default function PharmacyLanding() {
                   WhatsApp us <ArrowUpRight size={14} />
                 </a>
                 <span className={FOOTER_LINK}>Goregaon East, Mumbai</span>
+                {ALWAYS_OPEN_NOTICE && (
+                  <span className={FOOTER_LINK}>
+                    <Clock size={13} /> {ALWAYS_OPEN_NOTICE}
+                  </span>
+                )}
               </div>
               <div id="privacy" className={`max-sm:col-span-full ${SCROLL_OFFSET}`}>
                 <h3 className="mb-[18px] text-[11px] font-bold">Your information</h3>
